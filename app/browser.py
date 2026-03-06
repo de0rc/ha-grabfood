@@ -1,0 +1,141 @@
+"""Browser session manager — launches headed Chromium on Xvfb, captures Grab session cookies."""
+import asyncio
+import base64
+import json
+import logging
+import os
+from typing import Callable
+
+_LOGGER = logging.getLogger("grab.browser")
+
+GRAB_LOGIN_URL = "https://food.grab.com/auth/login"
+PROFILE_DIR = "/data/browser_profile"
+LOGIN_TIMEOUT = 180  # seconds user has to log in
+
+_state = {
+    "status": "idle",
+    "running": False,
+    "error": "",
+}
+
+
+def get_state() -> dict:
+    return dict(_state)
+
+
+def _extract_session_key(gfc_session_value: str) -> str:
+    """Extract sessionKey from gfc_session JWT payload."""
+    try:
+        parts = gfc_session_value.split(".")
+        if len(parts) < 2:
+            return ""
+        payload = parts[1]
+        payload += "=" * (4 - len(payload) % 4)
+        decoded = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8", errors="replace"))
+        return decoded.get("sessionKey", "")
+    except Exception as e:
+        _LOGGER.warning("Could not extract sessionKey from gfc_session: %s", e)
+        return ""
+
+
+async def launch_login(on_token: Callable[[dict], None]) -> None:
+    """Launch headed Chromium, navigate to Grab login, capture all required session cookies."""
+
+    if _state["running"]:
+        _LOGGER.warning("Login already in progress.")
+        return
+
+    _state["running"] = True
+    _state["status"] = "launching"
+    _state["error"] = ""
+
+    try:
+        from playwright.async_api import async_playwright
+
+        _LOGGER.info("Launching headed Chromium on display :99...")
+        async with async_playwright() as p:
+            launch_env = {**os.environ, "DISPLAY": ":99"}
+
+            os.makedirs(PROFILE_DIR, exist_ok=True)
+            context = await p.chromium.launch_persistent_context(
+                PROFILE_DIR,
+                headless=False,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--window-size=1280,800",
+                    "--window-position=0,0",
+                    "--disable-blink-features=AutomationControlled",
+                ],
+                ignore_default_args=["--enable-automation"],
+                env=launch_env,
+                viewport={"width": 1280, "height": 800},
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+            )
+
+            await context.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+            )
+
+            page = await context.new_page()
+            _LOGGER.info("Navigating to Grab login...")
+            _state["status"] = "waiting_login"
+
+            await page.goto(GRAB_LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
+
+            session_data = None
+            elapsed = 0
+            poll = 2
+
+            while elapsed < LOGIN_TIMEOUT:
+                cookies = await context.cookies("https://food.grab.com")
+                cookie_map = {c["name"]: c["value"] for c in cookies if c.get("value")}
+
+                authn = cookie_map.get("passenger_authn_token", "")
+                gfc = cookie_map.get("gfc_session", "")
+                gfc_guid = cookie_map.get("gfc_session_guid", "")
+                gfc_country = cookie_map.get("gfc_country", "MY").upper()
+
+                if authn and gfc:
+                    session_key = _extract_session_key(gfc)
+                    _LOGGER.info(
+                        "Captured: passenger_authn_token=%s... gfc_session=%s... session_key=%s... country=%s",
+                        authn[:20], gfc[:20], session_key[:20], gfc_country
+                    )
+                    session_data = {
+                        "passenger_authn_token": authn,
+                        "gfc_session": gfc,
+                        "gfc_session_guid": gfc_guid,
+                        "session_key": session_key,
+                        "country": gfc_country,
+                    }
+                    break
+
+                if elapsed % 10 == 0:
+                    _LOGGER.info("Waiting for login... cookies so far: %s", list(cookie_map.keys()))
+
+                await asyncio.sleep(poll)
+                elapsed += poll
+
+            await context.close()
+
+            if session_data:
+                _LOGGER.info("Session captured successfully.")
+                _state["status"] = "captured"
+                await on_token(session_data)
+            else:
+                _LOGGER.warning("Login timed out after %ds.", LOGIN_TIMEOUT)
+                _state["status"] = "timeout"
+
+    except Exception as exc:
+        _LOGGER.error("Browser error: %s", exc)
+        _state["status"] = "error"
+        _state["error"] = str(exc)
+    finally:
+        _state["running"] = False

@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>GrabFood Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --grab-green: #00B14F;
+      --grab-green-dark: #009240;
+      --grab-green-glow: rgba(0, 177, 79, 0.15);
+      --bg: #0d0f0e;
+      --surface: #141716;
+      --surface-2: #1c1f1d;
+      --surface-3: #232623;
+      --border: rgba(255,255,255,0.07);
+      --border-hover: rgba(255,255,255,0.12);
+      --text-primary: #f0f2f0;
+      --text-secondary: #8a9189;
+      --text-muted: #4a524a;
+      --red: #ff4d4d;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* HEADER */
+    .header {
+      padding: 0 1.5rem;
+      height: 56px;
+      background: var(--surface-3);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+      position: relative;
+    }
+    .header::after {
+      content: '';
+      position: absolute;
+      bottom: -1px; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--grab-green), transparent);
+      opacity: 0.4;
+    }
+
+    .logo { display: flex; align-items: center; gap: 0; }
+
+    .session-badge {
+      display: flex; align-items: center; gap: 0.4rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.72rem; font-weight: 600;
+      letter-spacing: 0.02em; text-transform: uppercase;
+    }
+    .session-badge .dot { width: 6px; height: 6px; border-radius: 50%; }
+    .badge-active {
+      background: rgba(0,177,79,0.12);
+      color: var(--grab-green);
+      border: 1px solid rgba(0,177,79,0.25);
+    }
+    .badge-active .dot { background: var(--grab-green); box-shadow: 0 0 6px var(--grab-green); }
+    .badge-inactive {
+      background: var(--surface-2);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+    }
+    .badge-inactive .dot { background: var(--text-muted); }
+
+    /* CONTROLS */
+    .controls {
+      padding: 0.875rem 1.5rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .controls-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+
+    .btn {
+      padding: 0.45rem 1.1rem;
+      border-radius: 8px;
+      font-size: 0.825rem; font-weight: 600;
+      font-family: 'DM Sans', sans-serif;
+      cursor: pointer; border: none;
+      transition: all 0.15s ease;
+      letter-spacing: 0.01em;
+    }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-primary {
+      background: var(--grab-green); color: #fff;
+      box-shadow: 0 2px 12px rgba(0,177,79,0.3);
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: var(--grab-green-dark);
+      box-shadow: 0 2px 16px rgba(0,177,79,0.4);
+      transform: translateY(-1px);
+    }
+    .btn-secondary {
+      background: var(--surface-2);
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover:not(:disabled) {
+      background: var(--surface-3);
+      border-color: var(--border-hover);
+      color: var(--text-primary);
+    }
+
+    .status-text { font-size: 0.78rem; color: var(--text-secondary); flex: 1; }
+    .status-text.active { color: var(--grab-green-dark); font-weight: 500; }
+    .session-info { font-family: 'DM Mono', monospace; font-size: 0.72rem; color: var(--text-muted); }
+
+    /* VNC */
+    .vnc-container { flex: 1; position: relative; background: #000; display: none; }
+    .vnc-container.visible { display: block; }
+    .vnc-container iframe { width: 100%; height: 100%; border: none; }
+
+    /* PLACEHOLDER */
+    .vnc-placeholder {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 1rem; padding: 2rem;
+    }
+    .vnc-placeholder.hidden { display: none; }
+    .placeholder-icon {
+      width: 64px; height: 64px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .placeholder-icon svg { width: 28px; height: 28px; stroke: var(--text-muted); }
+    .placeholder-title { font-size: 0.9rem; font-weight: 600; color: var(--text-secondary); }
+    .placeholder-sub {
+      font-size: 0.78rem; color: var(--text-muted);
+      text-align: center; max-width: 280px; line-height: 1.6;
+    }
+
+    /* MANUAL */
+    .manual {
+      padding: 0.75rem 1.5rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .manual summary {
+      font-size: 0.75rem; color: var(--text-muted);
+      cursor: pointer; user-select: none;
+      letter-spacing: 0.02em; list-style: none;
+      display: flex; align-items: center; gap: 0.4rem;
+    }
+    .manual summary::-webkit-details-marker { display: none; }
+    .manual summary::before { content: '›'; font-size: 0.9rem; transition: transform 0.2s; display: inline-block; }
+    .manual[open] summary::before { transform: rotate(90deg); }
+
+    .manual-body {
+      margin-top: 0.75rem;
+      display: flex; flex-direction: column; gap: 0.5rem;
+      padding: 0.875rem;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .manual-field { display: flex; gap: 0.75rem; align-items: center; }
+    .manual-field label {
+      font-size: 0.7rem; color: var(--text-muted);
+      width: 170px; flex-shrink: 0;
+      font-family: 'DM Mono', monospace;
+    }
+    .manual-body input {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-primary);
+      padding: 0.4rem 0.65rem;
+      font-size: 0.75rem;
+      font-family: 'DM Mono', monospace;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .manual-body input:focus {
+      outline: none;
+      border-color: var(--grab-green);
+      box-shadow: 0 0 0 3px var(--grab-green-glow);
+    }
+    .manual-actions { margin-top: 0.25rem; }
+    #manual-result { font-size: 0.75rem; margin-top: 0.4rem; font-family: 'DM Mono', monospace; }
+
+
+    .grab-logo {
+      height: 22px;
+      width: auto;
+      display: block;
+      flex-shrink: 0;
+    }
+    .logo-tracker {
+      font-size: 26px;
+      font-weight: 600;
+      color: var(--text-primary);
+      letter-spacing: 0.03em;
+      margin-left: 0.5rem;
+      line-height: 1;
+      display: inline-block;
+      overflow: hidden;
+      height: 22px;
+      vertical-align: middle;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      display: inline-block; width: 12px; height: 12px;
+      border: 2px solid rgba(255,255,255,0.35);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      vertical-align: middle; margin-right: 4px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">
+    <img src="data:image/png;base64,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" alt="GrabFood" class="grab-logo"/>
+    <span class="logo-tracker">Tracker</span>
+  </div>
+
+  {% if has_token %}
+    <div class="session-badge badge-active">
+      <div class="dot"></div>
+      Session active
+    </div>
+  {% else %}
+    <div class="session-badge badge-inactive">
+      <div class="dot"></div>
+      No session
+    </div>
+  {% endif %}
+</div>
+
+<div class="controls">
+  <div class="controls-row">
+    <button class="btn btn-primary" id="btn-login" onclick="startLogin()">
+      Login with Grab
+    </button>
+    <button class="btn btn-secondary" id="btn-hide" onclick="hideVnc()" style="display:none">
+      Hide browser
+    </button>
+    <span class="status-text" id="status-text">
+      {% if has_token %}
+        <span class="session-info">Session saved {{ token_updated_at[:19].replace("T", " ") }} UTC</span>
+      {% else %}
+        Click "Login with Grab" to authenticate
+      {% endif %}
+    </span>
+  </div>
+</div>
+
+<div class="vnc-container" id="vnc-container">
+  <iframe id="vnc-frame" src="" allow="fullscreen"></iframe>
+</div>
+
+<div class="vnc-placeholder" id="vnc-placeholder">
+  <div class="placeholder-icon">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <rect x="2" y="4" width="20" height="14" rx="2"/>
+      <path d="M8 20h8M12 18v2"/>
+    </svg>
+  </div>
+  <p class="placeholder-title">Browser window</p>
+  <p class="placeholder-sub">Click "Login with Grab" to open a browser window and authenticate your session.</p>
+</div>
+
+<div class="manual">
+  <details>
+    <summary>Manual session entry</summary>
+    <div class="manual-body">
+      <div class="manual-field">
+        <label>passenger_authn_token</label>
+        <input type="text" id="manual-authn" placeholder="eyJ…"/>
+      </div>
+      <div class="manual-field">
+        <label>gfc_session</label>
+        <input type="text" id="manual-gfc" placeholder="eyJ…"/>
+      </div>
+      <div class="manual-actions">
+        <button class="btn btn-secondary" onclick="saveManual()">Save Session</button>
+      </div>
+      <div id="manual-result"></div>
+    </div>
+  </details>
+</div>
+
+<script>
+  const BASE = "{{ ingress_path }}";
+
+  function getNoVncUrl() {
+    const ingress = "{{ ingress_path }}";
+    const wsPath = ingress + "/novnc/websockify";
+    return `${location.origin}${ingress}/novnc/vnc.html?path=${encodeURIComponent(wsPath.replace(/^\//, ''))}&autoconnect=true&resize=scale&show_dot=false`;
+  }
+
+  function showVnc() {
+    document.getElementById("vnc-container").classList.add("visible");
+    document.getElementById("vnc-placeholder").classList.add("hidden");
+    document.getElementById("btn-hide").style.display = "inline-block";
+    document.getElementById("vnc-frame").src = getNoVncUrl();
+  }
+
+  function hideVnc() {
+    document.getElementById("vnc-container").classList.remove("visible");
+    document.getElementById("vnc-placeholder").classList.remove("hidden");
+    document.getElementById("btn-hide").style.display = "none";
+  }
+
+  const STATUS_MESSAGES = {
+    "idle":          "Click \"Login with Grab\" to authenticate",
+    "launching":     "Launching browser…",
+    "waiting_login": "Browser open — log in to Grab in the window above",
+    "captured":      "Session captured — saving…",
+    "timeout":       "Timed out. Please try again.",
+    "error":         "Error — check add-on logs.",
+  };
+
+  async function startLogin() {
+    const btn = document.getElementById("btn-login");
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Launching…';
+    setStatus("launching");
+
+    const resp = await fetch(BASE + "/login/start", { method: "POST" });
+    const data = await resp.json();
+    if (!data.ok) {
+      setStatus("error");
+      btn.disabled = false;
+      btn.innerHTML = "Login with Grab";
+      return;
+    }
+    showVnc();
+    pollStatus();
+  }
+
+  function setStatus(status) {
+    const el = document.getElementById("status-text");
+    el.textContent = STATUS_MESSAGES[status] || status;
+    el.className = "status-text" + (status === "waiting_login" ? " active" : "");
+  }
+
+  function pollStatus() {
+    const btn = document.getElementById("btn-login");
+    const iv = setInterval(async () => {
+      try {
+        const resp = await fetch(BASE + "/login/status");
+        const data = await resp.json();
+        setStatus(data.status);
+        if (data.status === "captured") {
+          clearInterval(iv);
+          setTimeout(() => location.reload(), 1500);
+        } else if (["timeout", "error"].includes(data.status)) {
+          clearInterval(iv);
+          btn.disabled = false;
+          btn.innerHTML = "Login with Grab";
+        } else if (!data.running && data.status === "idle") {
+          clearInterval(iv);
+          btn.disabled = false;
+          btn.innerHTML = "Login with Grab";
+        }
+      } catch (e) {
+        clearInterval(iv);
+        btn.disabled = false;
+        btn.innerHTML = "Login with Grab";
+      }
+    }, 2000);
+  }
+
+  async function saveManual() {
+    const authn = document.getElementById("manual-authn").value.trim();
+    const gfc   = document.getElementById("manual-gfc").value.trim();
+    const result = document.getElementById("manual-result");
+    if (!authn || !gfc) {
+      result.style.color = "var(--red)";
+      result.textContent = "Both fields are required.";
+      return;
+    }
+    result.style.color = "var(--text-muted)";
+    result.textContent = "Saving…";
+    const resp = await fetch(BASE + "/token/manual", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passenger_authn_token: authn, gfc_session: gfc }),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      result.style.color = "var(--grab-green)";
+      result.textContent = "✓ Session saved successfully.";
+      setTimeout(() => location.reload(), 1000);
+    } else {
+      result.style.color = "var(--red)";
+      result.textContent = "Error: " + data.error;
+    }
+  }
+</script>
+</body>
+</html>
