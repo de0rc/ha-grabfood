@@ -1,0 +1,4 @@
+configuration:
+  show_driver_map:
+    name: Driver Map
+    description: Enable to track your delivery driver's location on the Home Assistant map. Creates a device_tracker.grabfood_driver entity.

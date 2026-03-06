@@ -184,7 +184,7 @@ def _icon_for(suffix: str) -> str:
         "eta":          "mdi:clock-outline",
         "eta_minutes":  "mdi:timer-outline",
         "restaurant":   "mdi:store",
-        "active_order": "mdi:check-circle-outline",
+        "active_order": "mdi:shopping",
     }
     return icons.get(suffix, "mdi:information-outline")
 

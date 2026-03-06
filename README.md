@@ -50,7 +50,7 @@ The add-on launches a headless Chromium browser (via Playwright) on a virtual di
 
 | State | Interval |
 |-------|----------|
-| `FOOD_COLLECTED` | 30 seconds |
+| `FOOD_COLLECTED`, `DRIVER_ARRIVED` | 30 seconds |
 | `ALLOCATING`, `PICKING_UP`, `DRIVER_AT_STORE` | 60 seconds |
 | `COMPLETED`, `CANCELLED`, `FAILED` | 5 minutes |
 

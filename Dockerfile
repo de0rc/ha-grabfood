@@ -38,8 +38,6 @@ RUN playwright install chromium \
     && playwright install-deps chromium
 
 WORKDIR /app
-COPY start.sh /start.sh
-RUN chmod +x /start.sh
+COPY start.sh /etc/services.d/grabfood/run
+RUN chmod +x /etc/services.d/grabfood/run
 COPY app/ /app/
-
-CMD ["/bin/bash", "/start.sh"]

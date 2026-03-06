@@ -241,7 +241,7 @@ class GrabPoller:
     def start(self):
         if not self._running:
             self._running = True
-            self._task = asyncio.ensure_future(self._poll_loop())
+            self._task = asyncio.create_task(self._poll_loop())
             logger.info("GrabPoller started.")
 
     def stop(self):

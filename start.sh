@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/with-contenv bashio
 set -e
 
 # Read options from HA add-on config and export as env vars
@@ -11,14 +11,19 @@ else
     export SHOW_DRIVER_MAP=false
 fi
 
-echo "[grab-login] Launching app under xvfb-run..."
-exec xvfb-run --server-num=99 \
-     --server-args="-screen 0 1280x800x24 -ac" \
-     bash -c "
-        echo '[grab-login] Xvfb started on :99'
-        x11vnc -display :99 -nopw -listen 0.0.0.0 -rfbport 5900 -forever -shared -quiet &
-        sleep 1
-        echo '[grab-login] x11vnc started'
-        export DISPLAY=:99
-        exec python3 /app/main.py
-     "
+# Start Xvfb directly as background process
+echo "[grab-login] Starting Xvfb on :99..."
+Xvfb :99 -screen 0 1280x800x24 -ac &
+XVFB_PID=$!
+sleep 1
+
+export DISPLAY=:99
+echo "[grab-login] Xvfb started (PID $XVFB_PID)"
+
+# Start x11vnc as background process
+echo "[grab-login] Starting x11vnc..."
+x11vnc -display :99 -nopw -listen 0.0.0.0 -rfbport 5900 -forever -shared -quiet &
+sleep 1
+echo "[grab-login] x11vnc started"
+
+exec python3 /app/main.py
