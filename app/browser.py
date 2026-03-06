@@ -12,6 +12,13 @@ GRAB_LOGIN_URL = "https://food.grab.com/auth/login"
 PROFILE_DIR = "/data/browser_profile"
 LOGIN_TIMEOUT = 180  # seconds user has to log in
 
+# Shared user-agent — keep in sync with poller.py
+CHROME_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
+
 _state = {
     "status": "idle",
     "running": False,
@@ -72,11 +79,7 @@ async def launch_login(on_token: Callable[[dict], None]) -> None:
                 ignore_default_args=["--enable-automation"],
                 env=launch_env,
                 viewport={"width": 1280, "height": 800},
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                ),
+                user_agent=CHROME_USER_AGENT,
             )
 
             await context.add_init_script(
@@ -84,6 +87,13 @@ async def launch_login(on_token: Callable[[dict], None]) -> None:
             )
 
             page = await context.new_page()
+
+            # Log any JS errors from the login page
+            def _on_page_error(err) -> None:
+                _LOGGER.warning("Grab login page JS error: %s", err)
+
+            page.on("pageerror", _on_page_error)
+
             _LOGGER.info("Navigating to Grab login...")
             _state["status"] = "waiting_login"
 
@@ -104,10 +114,22 @@ async def launch_login(on_token: Callable[[dict], None]) -> None:
 
                 if authn and gfc:
                     session_key = _extract_session_key(gfc)
-                    _LOGGER.info(
-                        "Captured: passenger_authn_token=%s... gfc_session=%s... session_key=%s... country=%s",
-                        authn[:20], gfc[:20], session_key[:20], gfc_country
-                    )
+                    if not session_key:
+                        _LOGGER.warning(
+                            "session_key extraction returned empty — API calls may fail. "
+                            "gfc_session prefix: %s...", gfc[:20]
+                        )
+                    else:
+                        _LOGGER.info(
+                            "Captured: passenger_authn_token=%s... gfc_session=%s... "
+                            "session_key=%s... country=%s",
+                            authn[:20], gfc[:20], session_key[:20], gfc_country
+                        )
+                    if not gfc_guid:
+                        _LOGGER.debug("gfc_session_guid not present — may be optional for region %s", gfc_country)
+                    else:
+                        _LOGGER.debug("gfc_session_guid captured: %s...", gfc_guid[:20])
+
                     session_data = {
                         "passenger_authn_token": authn,
                         "gfc_session": gfc,
@@ -130,7 +152,7 @@ async def launch_login(on_token: Callable[[dict], None]) -> None:
                 _state["status"] = "captured"
                 await on_token(session_data)
             else:
-                _LOGGER.warning("Login timed out after %ds.", LOGIN_TIMEOUT)
+                _LOGGER.error("Login timed out after %ds — user action required.", LOGIN_TIMEOUT)
                 _state["status"] = "timeout"
 
     except Exception as exc:

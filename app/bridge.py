@@ -50,9 +50,10 @@ SENSOR_MAP = {
 
 async def push_sensors(session: aiohttp.ClientSession, data: dict) -> None:
     if not _supervisor_token():
-        logger.warning("SUPERVISOR_TOKEN not set — cannot push to HA.")
+        logger.debug("push_sensors skipped — SUPERVISOR_TOKEN not set.")
         return
 
+    pushed = 0
     for data_key, (suffix, friendly_name, unit) in SENSOR_MAP.items():
         value = data.get(data_key)
 
@@ -84,25 +85,40 @@ async def push_sensors(session: aiohttp.ClientSession, data: dict) -> None:
             ) as resp:
                 if resp.status not in (200, 201):
                     text = await resp.text()
-                    logger.warning("Failed to set %s: HTTP %s — %s", suffix, resp.status, text[:200])
+                    logger.warning(
+                        "Failed to set %s: HTTP %s — %s", suffix, resp.status, text[:200]
+                    )
                 else:
+                    pushed += 1
                     logger.debug("Set %s = %s", suffix, state)
         except Exception as e:
             logger.warning("Error pushing sensor %s: %s", suffix, e)
+
+    if pushed:
+        logger.info("Pushed %d/%d sensors to HA.", pushed, len(SENSOR_MAP))
 
 
 async def push_driver_map(session: aiohttp.ClientSession, data: dict) -> None:
     """Push device_tracker.grabfood_driver with lat/lon so it shows on HA map."""
     if not _supervisor_token():
+        logger.debug("push_driver_map skipped — SUPERVISOR_TOKEN not set.")
         return
 
     lat = data.get("driver_lat")
     lon = data.get("driver_lon")
     active = data.get("active_order", False)
 
-    if not active or lat is None or lon is None:
+    if not active:
+        logger.debug("Driver map push skipped — no active order.")
         state = "not_home"
         attributes: dict[str, Any] = {
+            "friendly_name": "GrabFood Driver",
+            "icon": "mdi:moped",
+        }
+    elif lat is None or lon is None:
+        logger.debug("Driver map push skipped — lat/lon not yet available (driver not assigned?).")
+        state = "not_home"
+        attributes = {
             "friendly_name": "GrabFood Driver",
             "icon": "mdi:moped",
         }
@@ -126,15 +142,18 @@ async def push_driver_map(session: aiohttp.ClientSession, data: dict) -> None:
         ) as resp:
             if resp.status not in (200, 201):
                 text = await resp.text()
-                logger.warning("Failed to update driver tracker: HTTP %s — %s", resp.status, text[:200])
+                logger.warning(
+                    "Failed to update driver tracker: HTTP %s — %s", resp.status, text[:200]
+                )
             else:
-                logger.debug("Driver tracker: lat=%s lon=%s", lat, lon)
+                logger.debug("Driver tracker updated: lat=%s lon=%s", lat, lon)
     except Exception as e:
         logger.warning("Error pushing driver tracker: %s", e)
 
 
 async def send_token_expired_notification(session: aiohttp.ClientSession) -> None:
     if not _supervisor_token():
+        logger.debug("send_token_expired_notification skipped — SUPERVISOR_TOKEN not set.")
         return
 
     payload = {
@@ -156,13 +175,16 @@ async def send_token_expired_notification(session: aiohttp.ClientSession) -> Non
                 logger.info("Token expiry notification sent to HA.")
             else:
                 text = await resp.text()
-                logger.warning("Failed to send HA notification: HTTP %s — %s", resp.status, text[:200])
+                logger.warning(
+                    "Failed to send HA notification: HTTP %s — %s", resp.status, text[:200]
+                )
     except Exception as e:
         logger.warning("Error sending HA notification: %s", e)
 
 
 async def clear_token_expired_notification(session: aiohttp.ClientSession) -> None:
     if not _supervisor_token():
+        logger.debug("clear_token_expired_notification skipped — SUPERVISOR_TOKEN not set.")
         return
 
     try:
@@ -195,7 +217,18 @@ class Bridge:
 
     async def start(self):
         self._session = aiohttp.ClientSession()
-        logger.info("Bridge started (driver_map=%s).", _show_driver_map())
+        token = _supervisor_token()
+        if not token:
+            logger.error(
+                "SUPERVISOR_TOKEN is not set — all HA sensor pushes will be skipped. "
+                "Ensure hassio_api is enabled in config.yaml and the add-on is installed "
+                "via Home Assistant Supervisor."
+            )
+        else:
+            logger.info(
+                "Bridge started — SUPERVISOR_TOKEN present (%s…), driver_map=%s.",
+                token[:10], _show_driver_map()
+            )
 
     async def stop(self):
         if self._session:
@@ -208,6 +241,8 @@ class Bridge:
         await push_sensors(self._session, data)
         if _show_driver_map():
             await push_driver_map(self._session, data)
+        else:
+            logger.debug("Driver map push skipped — show_driver_map is disabled.")
         if was_expired:
             await clear_token_expired_notification(self._session)
 

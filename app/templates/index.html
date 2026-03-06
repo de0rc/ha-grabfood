@@ -262,7 +262,7 @@
     </button>
     <span class="status-text" id="status-text">
       {% if has_token %}
-        <span class="session-info">Session saved {{ token_updated_at[:19].replace("T", " ") }} UTC</span>
+        <span class="session-info">Session saved {{ token_updated_at_display }}</span>
       {% else %}
         Click "Login with Grab" to authenticate
       {% endif %}

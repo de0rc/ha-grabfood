@@ -1,6 +1,6 @@
 name: "GrabFood Tracker"
 description: "Tracks GrabFood delivery orders in Home Assistant."
-version: "0.1.1"
+version: "0.1.2"
 slug: "grabfood_tracker"
 init: false
 arch:
@@ -18,5 +18,7 @@ auth_api: true
 homeassistant_api: true
 options:
   show_driver_map: false
+  log_level: "info"
 schema:
   show_driver_map: bool
+  log_level: "list(debug|info|warning|error)"

@@ -15,14 +15,48 @@ class TokenStore:
         self._updated_at: str = ""
         self._lock = asyncio.Lock()
 
-    async def load(self) -> None:
+    # ------------------------------------------------------------------
+    # Internal sync helpers — called via asyncio.to_thread
+    # ------------------------------------------------------------------
+
+    def _read_from_disk(self) -> dict:
+        """Sync: read and return the saved JSON dict from disk."""
+        with open(self._path) as f:
+            return json.load(f)
+
+    def _write_to_disk(self, payload: dict) -> None:
+        """Sync: write payload dict to disk atomically."""
+        with open(self._path, "w") as f:
+            json.dump(payload, f)
+
+    def session_data_sync(self) -> dict:
+        """Sync accessor used by GrabPoller via asyncio.to_thread.
+        Returns the session data dict, or {} if not available.
+        """
         try:
             with open(self._path) as f:
                 saved = json.load(f)
-                self._data = saved.get("data", {})
-                self._updated_at = saved.get("updated_at", "")
-                if self._data:
-                    _LOGGER.info("Loaded existing session (updated %s)", self._updated_at)
+                data = saved.get("data", {})
+                if data.get("passenger_authn_token") and data.get("gfc_session"):
+                    return data
+                return {}
+        except FileNotFoundError:
+            return {}
+        except Exception as e:
+            _LOGGER.warning("Could not read session file: %s", e)
+            return {}
+
+    # ------------------------------------------------------------------
+    # Async public API
+    # ------------------------------------------------------------------
+
+    async def load(self) -> None:
+        try:
+            saved = await asyncio.to_thread(self._read_from_disk)
+            self._data = saved.get("data", {})
+            self._updated_at = saved.get("updated_at", "")
+            if self._data:
+                _LOGGER.info("Loaded existing session (updated %s)", self._updated_at)
         except FileNotFoundError:
             _LOGGER.info("No existing session — login required.")
         except Exception as exc:
@@ -33,9 +67,9 @@ class TokenStore:
         async with self._lock:
             self._data = data
             self._updated_at = datetime.now(timezone.utc).isoformat()
+            payload = {"data": self._data, "updated_at": self._updated_at}
             try:
-                with open(self._path, "w") as f:
-                    json.dump({"data": self._data, "updated_at": self._updated_at}, f)
+                await asyncio.to_thread(self._write_to_disk, payload)
                 _LOGGER.info("Session saved at %s", self._updated_at)
             except Exception as exc:
                 _LOGGER.error("Failed to save session: %s", exc)

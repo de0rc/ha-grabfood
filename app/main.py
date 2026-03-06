@@ -16,8 +16,9 @@ from browser import launch_login, get_state
 from poller import GrabPoller
 from bridge import Bridge
 
+_log_level = os.environ.get("LOG_LEVEL", "info").upper()
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, _log_level, logging.INFO),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
@@ -30,6 +31,7 @@ VNC_HOST = "127.0.0.1"
 VNC_PORT = 5900
 
 _JINJA_ENV = None
+_login_lock = asyncio.Lock()
 
 
 def jinja() -> Environment:
@@ -41,24 +43,30 @@ def jinja() -> Environment:
 
 async def handle_index(request: web.Request) -> web.Response:
     ingress_path = request.headers.get("X-Ingress-Path", "")
+    raw_ts = token_store.updated_at
+    if raw_ts and len(raw_ts) >= 19:
+        token_updated_at_display = raw_ts[:19].replace("T", " ") + " UTC"
+    else:
+        token_updated_at_display = ""
     tmpl = jinja().get_template("index.html")
     html = tmpl.render(
         ingress_path=ingress_path,
         has_token=token_store.has_token,
-        token_updated_at=token_store.updated_at,
+        token_updated_at_display=token_updated_at_display,
         browser_state=get_state(),
     )
     return web.Response(text=html, content_type="text/html")
 
 
 async def handle_login_start(request: web.Request) -> web.Response:
-    if get_state()["running"]:
-        return web.json_response({"ok": False, "error": "Login already in progress"})
+    async with _login_lock:
+        if get_state()["running"]:
+            return web.json_response({"ok": False, "error": "Login already in progress"})
 
-    async def on_token(token: dict):
-        await token_store.save(token)
+        async def on_token(token: dict):
+            await token_store.save(token)
 
-    asyncio.ensure_future(launch_login(on_token=on_token))
+        asyncio.create_task(launch_login(on_token=on_token))
     return web.json_response({"ok": True})
 
 
@@ -175,7 +183,7 @@ async def check_vnc_port():
         await writer.wait_closed()
         _LOGGER.info("VNC port %s:%s is reachable", VNC_HOST, VNC_PORT)
     except Exception as exc:
-        _LOGGER.warning("VNC port %s:%s NOT reachable: %s", VNC_HOST, VNC_PORT, exc)
+        _LOGGER.error("VNC port %s:%s NOT reachable: %s", VNC_HOST, VNC_PORT, exc)
 
 
 async def on_startup(app: web.Application):
@@ -183,6 +191,7 @@ async def on_startup(app: web.Application):
     await bridge.start()
 
     poller = GrabPoller(
+        token_store=token_store,
         on_update=bridge.update,
         on_token_expired=bridge.notify_token_expired,
     )

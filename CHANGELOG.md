@@ -1,0 +1,57 @@
+# Changelog
+
+## 0.1.2
+
+### Bug Fixes
+- Move `DRIVER_ARRIVED` from idle to fast poll states (30s interval)
+- Replace token-expired sentinel dict with proper `TokenExpiredError` exception
+- Fix `is_active` catch-all — now uses explicit known states only
+- Fix race condition on login start with `asyncio.Lock`
+- Fix fragile timestamp slicing in UI template — now formatted in Python
+
+### Security
+- Restrict x11vnc to `127.0.0.1` (was binding to `0.0.0.0`)
+
+### Dependencies
+- Pin `playwright==1.48.0`, `aiohttp==3.10.10`, `jinja2==3.1.4`
+- Pin noVNC to `v1.5.0`, websockify to `v0.11.0`
+
+### Code Quality
+- Replace deprecated `asyncio.ensure_future` with `asyncio.create_task`
+- Bump Chrome user-agent to 131, shared constant across `browser.py` and `poller.py`
+- Inject `TokenStore` into `GrabPoller` instead of reading token file directly
+- Wrap all blocking file I/O with `asyncio.to_thread`
+
+### Logging
+- Add `log_level` config option (`debug` / `info` / `warning` / `error`)
+- Improved error visibility for supervisor token, login timeout, VNC, and API 401
+- Debug logs for API response structure, sensor pushes, and driver map skip reasons
+
+## 0.1.1
+
+### Bug Fixes
+- Fix `SUPERVISOR_TOKEN` not being injected — `start.sh` was called directly via `CMD` in Dockerfile, bypassing s6-overlay and `with-contenv`
+- Fix manual token handler missing `country` and `gfc_session_guid` fields
+- Fix `active_order` icon to `mdi:shopping`
+
+### Code Quality
+- Move `start.sh` to `/etc/services.d/grabfood/run` as s6 service
+- Replace `Xvfb-run` with direct `Xvfb` and `x11vnc` background processes
+- Read `SUPERVISOR_TOKEN` via `with-contenv` bashio shebang
+- Replace deprecated `asyncio.ensure_future` with `create_task`
+- Remove `__import__` hack, add proper `json` import
+
+### Docs
+- Add `DOCS.md` documentation page
+- Add `translations/en.yaml` for config option labels and descriptions
+- Add `DRIVER_ARRIVED` to README poll intervals table
+
+## 0.1.0
+
+- Browser-based GrabFood login via noVNC (no manual cookie extraction)
+- Polls GrabFood API for live order status
+- Exposes sensors: order status, ETA, ETA minutes, restaurant name, active order
+- Optional driver location tracker (`device_tracker.grabfood_driver`)
+- Auto-detects country from session (MY, SG, ID, etc.)
+- Supports amd64 and aarch64 architectures
+- Persistent session across add-on restarts

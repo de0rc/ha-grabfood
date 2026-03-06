@@ -8,7 +8,9 @@ A Home Assistant add-on that tracks your GrabFood delivery orders and exposes th
 - Exposes order data as HA sensors (status, ETA, restaurant, driver location)
 - Optional driver map tracker (`device_tracker.grabfood_driver`)
 - Browser-based login via noVNC — no manual cookie extraction needed
+- Manual session entry as a fallback login option
 - Automatic session persistence across restarts
+- Configurable log level for easy debugging
 
 ## Sensors Created
 
@@ -36,15 +38,18 @@ A Home Assistant add-on that tracks your GrabFood delivery orders and exposes th
 
 5. Log in to your GrabFood account. The session will be captured automatically.
 
+> **Alternative:** If the browser login doesn't work in your environment, use the **Manual session entry** panel at the bottom of the Web UI to paste your `passenger_authn_token` and `gfc_session` cookies directly.
+
 ## Configuration
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `show_driver_map` | `false` | Enable driver location tracking on HA map |
+| `log_level` | `info` | Log verbosity: `debug`, `info`, `warning`, `error` |
 
 ## How It Works
 
-The add-on launches a headless Chromium browser (via Playwright) on a virtual display (Xvfb), navigates to the GrabFood login page, and captures session cookies once you log in. These cookies are then used to poll the GrabFood API every 30–300 seconds depending on order state.
+The add-on launches a Chromium browser (via Playwright) on a virtual display (Xvfb), navigates to the GrabFood login page, and captures session cookies once you log in. These cookies are then used to poll the GrabFood API every 30–300 seconds depending on order state.
 
 ## Poll Intervals
 
