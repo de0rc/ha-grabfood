@@ -79,6 +79,17 @@
       border: 1px solid var(--border);
     }
     .badge-inactive .dot { background: var(--text-muted); }
+    .badge-reauth {
+      background: rgba(255, 170, 0, 0.1);
+      color: #ffaa00;
+      border: 1px solid rgba(255, 170, 0, 0.25);
+    }
+    .badge-reauth .dot {
+      background: #ffaa00;
+      box-shadow: 0 0 6px #ffaa00;
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
     /* CONTROLS */
     .controls {
@@ -334,6 +345,7 @@
     "captured":      "Session captured — saving…",
     "timeout":       "Timed out. Please try again.",
     "error":         "Error — check add-on logs.",
+    "reauth":        "Re-authenticating… please wait",
   };
 
   async function startLogin() {
@@ -358,6 +370,14 @@
     const el = document.getElementById("status-text");
     el.textContent = STATUS_MESSAGES[status] || status;
     el.className = "status-text" + (status === "waiting_login" ? " active" : "");
+
+    const badge = document.querySelector(".session-badge");
+    if (badge) {
+      if (status === "reauth") {
+        badge.className = "session-badge badge-reauth";
+        badge.innerHTML = '<div class="dot"></div> Re-authenticating';
+      }
+    }
   }
 
   function pollStatus() {

@@ -4,13 +4,14 @@ import base64
 import json
 import logging
 import os
-from typing import Callable
+from typing import Callable, Optional
 
 _LOGGER = logging.getLogger("grab.browser")
 
 GRAB_LOGIN_URL = "https://food.grab.com/auth/login"
 PROFILE_DIR = "/data/browser_profile"
-LOGIN_TIMEOUT = 180  # seconds user has to log in
+LOGIN_TIMEOUT = 180      # seconds user has to log in (normal flow)
+REAUTH_TIMEOUT = 30      # seconds for silent re-authentication attempt
 
 # Shared user-agent — keep in sync with poller.py
 CHROME_USER_AGENT = (
@@ -45,21 +46,40 @@ def _extract_session_key(gfc_session_value: str) -> str:
         return ""
 
 
-async def launch_login(on_token: Callable[[dict], None]) -> None:
-    """Launch headed Chromium, navigate to Grab login, capture all required session cookies."""
+async def launch_login(
+    on_token: Callable[[dict], None],
+    silent: bool = False,
+) -> bool:
+    """Launch headed Chromium, navigate to Grab login, capture all required session cookies.
 
+    Args:
+        on_token: Callback invoked with session data dict on successful capture.
+        silent:   If True, uses REAUTH_TIMEOUT (30s) and sets status to 'reauth'.
+                  Used for automatic re-authentication against saved browser profile.
+                  If False (default), uses LOGIN_TIMEOUT (180s) and normal UI flow.
+
+    Returns:
+        True if session was captured successfully, False otherwise.
+    """
     if _state["running"]:
         _LOGGER.warning("Login already in progress.")
-        return
+        return False
 
     _state["running"] = True
-    _state["status"] = "launching"
+    _state["status"] = "reauth" if silent else "launching"
     _state["error"] = ""
+
+    timeout = REAUTH_TIMEOUT if silent else LOGIN_TIMEOUT
+    success = False
 
     try:
         from playwright.async_api import async_playwright
 
-        _LOGGER.info("Launching headed Chromium on display :99...")
+        if silent:
+            _LOGGER.info("Attempting silent re-authentication via saved browser profile...")
+        else:
+            _LOGGER.info("Launching headed Chromium on display :99...")
+
         async with async_playwright() as p:
             launch_env = {**os.environ, "DISPLAY": ":99"}
 
@@ -94,8 +114,9 @@ async def launch_login(on_token: Callable[[dict], None]) -> None:
 
             page.on("pageerror", _on_page_error)
 
-            _LOGGER.info("Navigating to Grab login...")
-            _state["status"] = "waiting_login"
+            if not silent:
+                _LOGGER.info("Navigating to Grab login...")
+                _state["status"] = "waiting_login"
 
             await page.goto(GRAB_LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
 
@@ -103,7 +124,7 @@ async def launch_login(on_token: Callable[[dict], None]) -> None:
             elapsed = 0
             poll = 2
 
-            while elapsed < LOGIN_TIMEOUT:
+            while elapsed < timeout:
                 cookies = await context.cookies("https://food.grab.com")
                 cookie_map = {c["name"]: c["value"] for c in cookies if c.get("value")}
 
@@ -126,7 +147,10 @@ async def launch_login(on_token: Callable[[dict], None]) -> None:
                             authn[:20], gfc[:20], session_key[:20], gfc_country
                         )
                     if not gfc_guid:
-                        _LOGGER.debug("gfc_session_guid not present — may be optional for region %s", gfc_country)
+                        _LOGGER.debug(
+                            "gfc_session_guid not present — may be optional for region %s",
+                            gfc_country
+                        )
                     else:
                         _LOGGER.debug("gfc_session_guid captured: %s...", gfc_guid[:20])
 
@@ -139,8 +163,10 @@ async def launch_login(on_token: Callable[[dict], None]) -> None:
                     }
                     break
 
-                if elapsed % 10 == 0:
-                    _LOGGER.info("Waiting for login... cookies so far: %s", list(cookie_map.keys()))
+                if not silent and elapsed % 10 == 0:
+                    _LOGGER.info(
+                        "Waiting for login... cookies so far: %s", list(cookie_map.keys())
+                    )
 
                 await asyncio.sleep(poll)
                 elapsed += poll
@@ -148,11 +174,23 @@ async def launch_login(on_token: Callable[[dict], None]) -> None:
             await context.close()
 
             if session_data:
-                _LOGGER.info("Session captured successfully.")
+                _LOGGER.info(
+                    "%s captured successfully.",
+                    "Silent re-authentication" if silent else "Session"
+                )
                 _state["status"] = "captured"
                 await on_token(session_data)
+                success = True
             else:
-                _LOGGER.error("Login timed out after %ds — user action required.", LOGIN_TIMEOUT)
+                if silent:
+                    _LOGGER.debug(
+                        "Silent re-authentication found no valid cookies in profile after %ds.",
+                        timeout
+                    )
+                else:
+                    _LOGGER.error(
+                        "Login timed out after %ds — user action required.", timeout
+                    )
                 _state["status"] = "timeout"
 
     except Exception as exc:
@@ -161,3 +199,12 @@ async def launch_login(on_token: Callable[[dict], None]) -> None:
         _state["error"] = str(exc)
     finally:
         _state["running"] = False
+
+    return success
+
+
+async def try_silent_reauth(on_token: Callable[[dict], None]) -> bool:
+    """Attempt silent re-authentication using the saved browser profile.
+    Returns True if new session cookies were captured, False otherwise.
+    """
+    return await launch_login(on_token=on_token, silent=True)

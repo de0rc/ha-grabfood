@@ -9,7 +9,8 @@ A Home Assistant add-on that tracks your GrabFood delivery orders and exposes th
 - Optional driver map tracker (`device_tracker.grabfood_driver`)
 - Browser-based login via noVNC — no manual cookie extraction needed
 - Manual session entry as a fallback login option
-- Automatic session persistence across restarts
+- Automatic re-authentication on session expiry using saved browser profile
+- Persistent session across add-on restarts
 - Configurable log level for easy debugging
 
 ## Sensors Created

@@ -10,7 +10,7 @@ from typing import Optional
 
 import aiohttp
 
-from browser import CHROME_USER_AGENT
+from browser import CHROME_USER_AGENT, try_silent_reauth
 from tokenstore import TokenStore
 
 logger = logging.getLogger(__name__)
@@ -161,7 +161,8 @@ async def _fetch_orders_from_url(
         ) as resp:
             if resp.status == 401:
                 logger.error(
-                    "GrabFood API 401 at %s — session expired, re-login required.", url
+                    "GrabFood API 401 at %s — session expired, attempting silent re-authentication.",
+                    url
                 )
                 raise TokenExpiredError()
             if resp.status != 200:
@@ -278,7 +279,21 @@ class GrabPoller:
                 except TokenExpiredError:
                     if not self._token_expired:
                         self._token_expired = True
-                        await self._on_token_expired()
+                        # Attempt silent re-authentication before alerting the user
+                        reauth_success = await try_silent_reauth(
+                            on_token=self._token_store.save
+                        )
+                        if reauth_success:
+                            logger.info(
+                                "Silent re-authentication succeeded — resuming polling."
+                            )
+                            self._token_expired = False
+                        else:
+                            logger.error(
+                                "Silent re-authentication failed — manual re-login required. "
+                                "HA notification sent."
+                            )
+                            await self._on_token_expired()
                     await asyncio.sleep(POLL_INTERVAL_IDLE)
                     continue
 

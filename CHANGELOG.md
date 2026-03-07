@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.3
+
+### Improvements
+- Automatic silent re-authentication on session expiry using saved browser profile
+- On 401, the add-on now attempts to recapture cookies silently (30s timeout) before alerting the user
+- HA notification and manual re-login only requested if silent reauth fails
+- Web UI shows amber pulsing **Re-authenticating** badge during silent reauth attempt
+
 ## 0.1.2
 
 ### Bug Fixes
