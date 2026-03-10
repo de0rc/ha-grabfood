@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import os
+import shutil
 from typing import Callable, Optional
 
 _LOGGER = logging.getLogger("grab.browser")
@@ -25,6 +26,33 @@ _state = {
     "running": False,
     "error": "",
 }
+
+
+# Chromium cache subdirectories that are safe to delete after each login.
+# These are regenerated on next launch — deleting them keeps the profile lean.
+_CACHE_DIRS = [
+    "Cache",
+    "Code Cache",
+    "GPUCache",
+    "Service Worker",
+    "IndexedDB",
+    "blob_storage",
+    "Network",
+]
+
+
+def _cleanup_browser_cache(profile_dir: str) -> None:
+    """Delete expendable Chromium cache subdirectories from the browser profile.
+    Cookies and session data are preserved — only regenerable cache is removed.
+    """
+    for name in _CACHE_DIRS:
+        path = os.path.join(profile_dir, "Default", name)
+        if os.path.exists(path):
+            try:
+                shutil.rmtree(path)
+                _LOGGER.debug("Cleared browser cache dir: %s", path)
+            except Exception as e:
+                _LOGGER.debug("Could not clear browser cache dir %s: %s", path, e)
 
 
 def get_state() -> dict:
@@ -172,6 +200,10 @@ async def launch_login(
                 elapsed += poll
 
             await context.close()
+
+            # Clean up Chromium cache dirs from the profile to prevent unbounded growth.
+            # Cookies are kept (they're what we need); only expendable cache is removed.
+            _cleanup_browser_cache(PROFILE_DIR)
 
             if session_data:
                 _LOGGER.info(

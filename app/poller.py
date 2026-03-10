@@ -72,7 +72,7 @@ def _extract_order_data(order: dict) -> dict:
     driver_lat = None
     driver_lon = None
     try:
-        loc = driver_track.get("location", {})
+        loc = driver_track.get("location") or {}
         if loc.get("latitude") and loc.get("longitude"):
             driver_lat = loc["latitude"]
             driver_lon = loc["longitude"]
@@ -239,6 +239,9 @@ async def fetch_latest_order(session: aiohttp.ClientSession, sess_data: dict) ->
         return None
 
 
+SESSION_RECREATE_INTERVAL = 6 * 3600  # recreate aiohttp session every 6 hours
+
+
 class GrabPoller:
     def __init__(self, token_store: TokenStore, on_update, on_token_expired):
         self._token_store = token_store
@@ -265,9 +268,26 @@ class GrabPoller:
             self._task.cancel()
             logger.info("GrabPoller stopped.")
 
+    def _new_session(self) -> aiohttp.ClientSession:
+        """Create a new aiohttp session with DummyCookieJar.
+        Cookies are passed manually per-request so we don't need the jar —
+        DummyCookieJar discards all Set-Cookie headers, preventing accumulation in memory.
+        """
+        return aiohttp.ClientSession(cookie_jar=aiohttp.DummyCookieJar())
+
     async def _poll_loop(self):
-        async with aiohttp.ClientSession() as session:
+        session = self._new_session()
+        session_created_at = asyncio.get_event_loop().time()
+
+        try:
             while self._running:
+                # Recreate session every 6 hours to flush connection pool and internal state
+                if asyncio.get_event_loop().time() - session_created_at >= SESSION_RECREATE_INTERVAL:
+                    await session.close()
+                    session = self._new_session()
+                    session_created_at = asyncio.get_event_loop().time()
+                    logger.debug("aiohttp session recreated to free memory.")
+
                 sess_data = await asyncio.to_thread(self._token_store.session_data_sync)
                 if not sess_data:
                     logger.info("No session on disk yet — waiting 30s...")
@@ -321,3 +341,5 @@ class GrabPoller:
                     interval = POLL_INTERVAL_IDLE
 
                 await asyncio.sleep(interval)
+        finally:
+            await session.close()

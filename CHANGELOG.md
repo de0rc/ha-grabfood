@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.4
+
+### Bug Fixes
+- Fix crash in `_extract_order_data` when `driverTrack.location` is `null` in API response (e.g. during `ALLOCATING` state before a driver is assigned)
+- Add missing `log_level` translation entry for HA configuration UI
+
+### Improvements
+- Clear Chromium cache directories (`Cache`, `Code Cache`, `GPUCache`, `Service Worker`, `IndexedDB`) after each browser session to prevent unbounded profile growth
+- Use `DummyCookieJar` for aiohttp session — discards `Set-Cookie` headers from API responses instead of accumulating them in memory
+- Recreate aiohttp session every 6 hours to flush connection pool and internal state
+
 ## 0.1.3
 
 ### Improvements
