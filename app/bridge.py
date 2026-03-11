@@ -159,8 +159,8 @@ async def send_token_expired_notification(session: aiohttp.ClientSession) -> Non
     payload = {
         "title": "GrabFood Tracker — Re-authentication Required",
         "message": (
-            "Your GrabFood session has expired. "
-            "Please open the **GrabFood Tracker** panel in the sidebar and log in again."
+            "Your GrabFood session has expired and could not be renewed automatically.\n\n"
+            "[Open GrabFood Tracker](/hassio/ingress/grabfood_tracker) and log in again."
         ),
         "notification_id": "grabfood_tracker_token_expired",
     }

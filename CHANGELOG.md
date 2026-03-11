@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.1.9
+
+### Bug Fixes
+- Fix silent reauth always failing — `context.cookies(url)` returns empty without a prior
+  navigation to that origin even when the profile has valid cookies on disk. Fix: navigate to the
+  login URL before polling cookies; the authenticated profile loads instantly with no login prompt
+  and cookies are immediately available
+- Fix `_token_expired` flag never resetting after a failed silent reauth — a single failure
+  permanently suppressed all future reauth attempts until the add-on was restarted
+- Fix Chromium launch timeout crashing into outer exception handler — now exits cleanly via
+  `context = None` guard
+- Fix `_write_to_disk` not being atomic — token file could be corrupted if the process was killed
+  mid-write; now uses temp file + `os.replace()`
+- Clear Chromium `SingletonLock`/`SingletonCookie`/`SingletonSocket` before every launch —
+  prevents profile load failures after an unclean shutdown
+
+### Improvements
+- Re-authentication notification now includes a clickable **Open GrabFood Tracker** link that
+  navigates directly to the add-on web UI — no need to find it in the sidebar manually
+- Increase `REAUTH_TIMEOUT` from 30s to 60s
+- Replace deprecated `asyncio.get_event_loop()` with `asyncio.get_running_loop()`
+- WebSocket upgrade, connect, and session-end logs downgraded from `INFO` to `DEBUG` — were
+  firing every few seconds while the noVNC panel was open
+- Silent reauth cookie capture log downgraded from `INFO` to `DEBUG`
+
 ## 0.1.5
 
 ### Improvements
@@ -29,7 +54,7 @@
 
 ### Improvements
 - Automatic silent re-authentication on session expiry using saved browser profile
-- On 401, the add-on now attempts to recapture cookies silently (30s timeout) before alerting the user
+- On 401, the add-on now attempts to recapture cookies silently before alerting the user
 - HA notification and manual re-login only requested if silent reauth fails
 - Web UI shows amber pulsing **Re-authenticating** badge during silent reauth attempt
 

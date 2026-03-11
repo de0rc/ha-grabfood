@@ -54,11 +54,11 @@ Use `debug` when troubleshooting — it enables detailed logs for API responses,
 
 ## Session Expiry
 
-When a session expires, the add-on will first attempt to re-authenticate silently using the saved browser profile — no action needed from you. If valid cookies are still present in the profile, the session will be restored automatically within 30 seconds and polling will resume without interruption.
+When a session expires, the add-on will first attempt to re-authenticate silently using the saved browser profile — no action needed from you. If valid cookies are still present in the profile, the session will be restored automatically in seconds and polling will resume without interruption.
 
 During this attempt the Web UI will show an amber **Re-authenticating** badge.
 
-If the silent attempt fails (profile cookies are also expired), you will receive a persistent notification in Home Assistant asking you to log in again. Open the Web UI from the sidebar and click **Start Login** to complete the process.
+If the silent attempt fails (profile cookies are also expired), you will receive a persistent notification in Home Assistant asking you to log in again. The add-on will retry silent re-authentication automatically on each subsequent expiry — you do not need to restart the add-on. Open the Web UI from the sidebar and click **Login with Grab** to complete a manual re-login if needed.
 
 The `sensor.grabfood_active_order` sensor will remain in its last known state until the session is restored.
 
@@ -69,7 +69,7 @@ This add-on works with any country where GrabFood is available. The country is d
 ## Troubleshooting
 
 **Sensors not updating after session expiry, HA notification received**
-The add-on attempted silent re-authentication but the saved browser profile had no valid cookies. Open the Web UI, click **Start Login**, and log in to your GrabFood account. Polling will resume automatically once the session is captured.
+The add-on attempted silent re-authentication but the saved browser profile had no valid cookies. Open the Web UI, click **Login with Grab**, and log in to your GrabFood account. Polling will resume automatically once the session is captured.
 
 **Sensors not updating**
 Check that you are logged in via the Web UI. If the session has expired, a notification will appear in Home Assistant — log in again to resume tracking.

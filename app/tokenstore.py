@@ -25,9 +25,11 @@ class TokenStore:
             return json.load(f)
 
     def _write_to_disk(self, payload: dict) -> None:
-        """Sync: write payload dict to disk atomically."""
-        with open(self._path, "w") as f:
+        """Sync: write payload dict to disk atomically via a temp file."""
+        tmp = self._path + ".tmp"
+        with open(tmp, "w") as f:
             json.dump(payload, f)
+        os.replace(tmp, self._path)
 
     def session_data_sync(self) -> dict:
         """Sync accessor used by GrabPoller via asyncio.to_thread.

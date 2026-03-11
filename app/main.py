@@ -122,7 +122,7 @@ async def handle_novnc_static(request: web.Request) -> web.FileResponse:
 
 
 async def handle_websockify(request: web.Request) -> web.WebSocketResponse:
-    _LOGGER.info("WebSocket upgrade request from %s", request.remote)
+    _LOGGER.debug("WebSocket upgrade request from %s", request.remote)
     _LOGGER.debug("WebSocket headers: %s", dict(request.headers))
 
     ws = web.WebSocketResponse(protocols=["binary", "base64"])
@@ -133,7 +133,7 @@ async def handle_websockify(request: web.Request) -> web.WebSocketResponse:
             asyncio.open_connection(VNC_HOST, VNC_PORT),
             timeout=5.0
         )
-        _LOGGER.info("Connected to VNC server successfully")
+        _LOGGER.debug("Connected to VNC server successfully")
     except asyncio.TimeoutError:
         _LOGGER.debug("WebSocket: VNC not available (no login in progress).")
         await ws.close()
@@ -170,7 +170,7 @@ async def handle_websockify(request: web.Request) -> web.WebSocketResponse:
             await ws.close()
 
     await asyncio.gather(ws_to_vnc(), vnc_to_ws())
-    _LOGGER.info("WebSocket session ended")
+    _LOGGER.debug("WebSocket session ended")
     return ws
 
 
