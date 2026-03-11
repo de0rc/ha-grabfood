@@ -1,6 +1,6 @@
 name: "GrabFood Tracker"
 description: "Tracks GrabFood delivery orders in Home Assistant."
-version: "0.1.4"
+version: "0.1.5"
 slug: "grabfood_tracker"
 init: false
 arch:

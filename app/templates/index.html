@@ -293,7 +293,7 @@
     </svg>
   </div>
   <p class="placeholder-title">Browser window</p>
-  <p class="placeholder-sub">Click "Login with Grab" to open a browser window and authenticate your session.</p>
+  <p class="placeholder-sub">Click "Login with Grab" to start a browser session and authenticate.</p>
 </div>
 
 <div class="manual">
@@ -362,7 +362,6 @@
       btn.innerHTML = "Login with Grab";
       return;
     }
-    showVnc();
     pollStatus();
   }
 
@@ -377,6 +376,11 @@
         badge.className = "session-badge badge-reauth";
         badge.innerHTML = '<div class="dot"></div> Re-authenticating';
       }
+    }
+
+    // Show VNC only once the display is ready and the browser is open
+    if (status === "waiting_login") {
+      showVnc();
     }
   }
 

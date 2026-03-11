@@ -5,6 +5,8 @@ import json
 import logging
 import os
 import shutil
+import subprocess
+import signal
 from typing import Callable, Optional
 
 _LOGGER = logging.getLogger("grab.browser")
@@ -26,6 +28,61 @@ _state = {
     "running": False,
     "error": "",
 }
+
+# Holds references to on-demand display processes
+_xvfb_proc: Optional[subprocess.Popen] = None
+_x11vnc_proc: Optional[subprocess.Popen] = None
+
+
+async def _start_display() -> None:
+    """Start Xvfb and x11vnc on demand. No-op if already running."""
+    global _xvfb_proc, _x11vnc_proc
+
+    if _xvfb_proc is None or _xvfb_proc.poll() is not None:
+        _LOGGER.info("Starting Xvfb on :99...")
+        _xvfb_proc = subprocess.Popen(
+            ["Xvfb", ":99", "-screen", "0", "1280x800x24", "-ac"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        await asyncio.sleep(1)
+        _LOGGER.info("Xvfb started (PID %s).", _xvfb_proc.pid)
+
+    if _x11vnc_proc is None or _x11vnc_proc.poll() is not None:
+        _LOGGER.info("Starting x11vnc...")
+        _x11vnc_proc = subprocess.Popen(
+            [
+                "x11vnc", "-display", ":99",
+                "-nopw", "-listen", "127.0.0.1",
+                "-rfbport", "5900",
+                "-forever", "-shared", "-quiet",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        await asyncio.sleep(1)
+        _LOGGER.info("x11vnc started (PID %s).", _x11vnc_proc.pid)
+
+
+async def _stop_display() -> None:
+    """Stop Xvfb and x11vnc if running."""
+    global _xvfb_proc, _x11vnc_proc
+
+    for name, proc in [("x11vnc", _x11vnc_proc), ("Xvfb", _xvfb_proc)]:
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.send_signal(signal.SIGTERM)
+                await asyncio.to_thread(proc.wait, 5)
+                _LOGGER.info("%s stopped.", name)
+            except Exception as e:
+                _LOGGER.debug("Could not stop %s cleanly: %s", name, e)
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+    _xvfb_proc = None
+    _x11vnc_proc = None
 
 
 # Chromium cache subdirectories that are safe to delete after each login.
@@ -108,6 +165,8 @@ async def launch_login(
         else:
             _LOGGER.info("Launching headed Chromium on display :99...")
 
+        await _start_display()
+
         async with async_playwright() as p:
             launch_env = {**os.environ, "DISPLAY": ":99"}
 
@@ -134,19 +193,20 @@ async def launch_login(
                 "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
             )
 
-            page = await context.new_page()
-
-            # Log any JS errors from the login page
-            def _on_page_error(err) -> None:
-                _LOGGER.warning("Grab login page JS error: %s", err)
-
-            page.on("pageerror", _on_page_error)
-
             if not silent:
+                page = await context.new_page()
+
+                def _on_page_error(err) -> None:
+                    _LOGGER.warning("Grab login page JS error: %s", err)
+
+                page.on("pageerror", _on_page_error)
                 _LOGGER.info("Navigating to Grab login...")
                 _state["status"] = "waiting_login"
-
-            await page.goto(GRAB_LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
+                await page.goto(GRAB_LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
+            else:
+                # Silent reauth — profile cookies are already loaded by the persistent context.
+                # No need to open a page or navigate anywhere; just check cookies directly.
+                _LOGGER.debug("Silent reauth — checking profile cookies without navigation.")
 
             session_data = None
             elapsed = 0
@@ -203,7 +263,7 @@ async def launch_login(
 
             # Clean up Chromium cache dirs from the profile to prevent unbounded growth.
             # Cookies are kept (they're what we need); only expendable cache is removed.
-            _cleanup_browser_cache(PROFILE_DIR)
+            await asyncio.to_thread(_cleanup_browser_cache, PROFILE_DIR)
 
             if session_data:
                 _LOGGER.info(
@@ -230,6 +290,7 @@ async def launch_login(
         _state["status"] = "error"
         _state["error"] = str(exc)
     finally:
+        await _stop_display()
         _state["running"] = False
 
     return success

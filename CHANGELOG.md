@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.5
+
+### Improvements
+- Start Xvfb and x11vnc on demand (only during login/reauth) instead of at add-on startup — eliminates idle RAM usage from persistent virtual display
+- Display lifecycle now managed entirely by `browser.py`; removed from `start.sh`
+- WebSocket VNC connection failures downgraded from `ERROR` to `DEBUG` — expected behaviour when no login is in progress
+- Removed `check_vnc_port()` startup check — irrelevant with on-demand display
+
+### Bug Fixes
+- Silent reauth no longer creates a browser page or navigates to the login URL — cookies are read directly from the persistent context, avoiding an unnecessary page load
+- `subprocess.Popen` no longer incorrectly wrapped in `asyncio.to_thread` — `Popen` forks immediately and is not a blocking call
+- `_cleanup_browser_cache` now runs via `asyncio.to_thread` — `shutil.rmtree` is blocking disk I/O and should not run on the event loop
+- VNC panel now shown only when status reaches `waiting_login`, not immediately on login click — prevents a failed WebSocket connection before the display is ready
+
 ## 0.1.4
 
 ### Bug Fixes

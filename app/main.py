@@ -127,7 +127,6 @@ async def handle_websockify(request: web.Request) -> web.WebSocketResponse:
 
     ws = web.WebSocketResponse(protocols=["binary", "base64"])
     await ws.prepare(request)
-    _LOGGER.info("WebSocket prepared, connecting to VNC %s:%s", VNC_HOST, VNC_PORT)
 
     try:
         reader, writer = await asyncio.wait_for(
@@ -136,11 +135,11 @@ async def handle_websockify(request: web.Request) -> web.WebSocketResponse:
         )
         _LOGGER.info("Connected to VNC server successfully")
     except asyncio.TimeoutError:
-        _LOGGER.error("Timeout connecting to VNC server at %s:%s", VNC_HOST, VNC_PORT)
+        _LOGGER.debug("WebSocket: VNC not available (no login in progress).")
         await ws.close()
         return ws
     except Exception as exc:
-        _LOGGER.error("Cannot connect to VNC server: %s", exc)
+        _LOGGER.debug("WebSocket: VNC not available: %s", exc)
         await ws.close()
         return ws
 
@@ -175,17 +174,6 @@ async def handle_websockify(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
-async def check_vnc_port():
-    """Log whether VNC port is reachable on startup."""
-    try:
-        reader, writer = await asyncio.open_connection(VNC_HOST, VNC_PORT)
-        writer.close()
-        await writer.wait_closed()
-        _LOGGER.info("VNC port %s:%s is reachable", VNC_HOST, VNC_PORT)
-    except Exception as exc:
-        _LOGGER.error("VNC port %s:%s NOT reachable: %s", VNC_HOST, VNC_PORT, exc)
-
-
 async def on_startup(app: web.Application):
     bridge = Bridge()
     await bridge.start()
@@ -210,9 +198,6 @@ async def on_cleanup(app: web.Application):
 
 async def main():
     await token_store.load()
-
-    await asyncio.sleep(2)
-    await check_vnc_port()
 
     app = web.Application()
     app.on_startup.append(on_startup)

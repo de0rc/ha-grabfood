@@ -3,7 +3,7 @@
 ## First Time Setup
 
 1. Start the add-on and open the Web UI from the sidebar.
-2. Click **Start Login** — a browser window will open via noVNC.
+2. Click **Login with Grab** — a browser session will start and appear via noVNC.
 3. Log in to your GrabFood account normally.
 4. The session will be captured automatically — the browser will close once done.
 5. Your sensors will start updating within 60 seconds.
@@ -77,8 +77,8 @@ Check that you are logged in via the Web UI. If the session has expired, a notif
 **Sensors never populate / all unknown after login**
 Check the add-on logs for `SUPERVISOR_TOKEN is not set`. This means the add-on cannot reach the Home Assistant API. Ensure the add-on is installed via the Home Assistant Supervisor (not bare Docker), and that `hassio_api: true` is present in the add-on configuration.
 
-**noVNC screen is black**
-Wait a few seconds and refresh. Xvfb may still be starting up.
+**noVNC screen is black or not appearing**
+The browser session starts on demand — the noVNC panel will appear automatically once the display is ready (a few seconds after clicking **Login with Grab**). If the screen remains black after the panel appears, wait a moment and refresh.
 
 **Login timed out**
 The browser session window closed before you completed login. Click **Start Login** again — you have 3 minutes to complete the login process.
