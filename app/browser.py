@@ -153,14 +153,17 @@ def _extract_session_key(gfc_session_value: str) -> str:
 async def launch_login(
     on_token: Callable[[dict], None],
     silent: bool = False,
+    on_success: Optional[Callable[[], None]] = None,
 ) -> bool:
     """Launch headed Chromium, navigate to Grab login, capture all required session cookies.
 
     Args:
-        on_token: Callback invoked with session data dict on successful capture.
-        silent:   If True, uses REAUTH_TIMEOUT and sets status to 'reauth'.
-                  Used for automatic re-authentication against saved browser profile.
-                  If False (default), uses LOGIN_TIMEOUT and normal UI flow.
+        on_token:   Callback invoked with session data dict on successful capture.
+        silent:     If True, uses REAUTH_TIMEOUT and sets status to 'reauth'.
+                    Used for automatic re-authentication against saved browser profile.
+                    If False (default), uses LOGIN_TIMEOUT and normal UI flow.
+        on_success: Optional async callback invoked after on_token completes.
+                    Used to trigger a supervisor restart to reclaim memory.
 
     Returns:
         True if session was captured successfully, False otherwise.
@@ -311,6 +314,8 @@ async def launch_login(
                     )
                     _state["status"] = "captured"
                     await on_token(session_data)
+                    if on_success:
+                        await on_success()
                     success = True
                 else:
                     if silent:
@@ -335,8 +340,11 @@ async def launch_login(
     return success
 
 
-async def try_silent_reauth(on_token: Callable[[dict], None]) -> bool:
+async def try_silent_reauth(
+    on_token: Callable[[dict], None],
+    on_success: Optional[Callable[[], None]] = None,
+) -> bool:
     """Attempt silent re-authentication using the saved browser profile.
     Returns True if new session cookies were captured, False otherwise.
     """
-    return await launch_login(on_token=on_token, silent=True)
+    return await launch_login(on_token=on_token, silent=True, on_success=on_success)

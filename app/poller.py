@@ -243,10 +243,11 @@ SESSION_RECREATE_INTERVAL = 6 * 3600  # recreate aiohttp session every 6 hours
 
 
 class GrabPoller:
-    def __init__(self, token_store: TokenStore, on_update, on_token_expired):
+    def __init__(self, token_store: TokenStore, on_update, on_token_expired, on_reauth_success=None):
         self._token_store = token_store
         self._on_update = on_update
         self._on_token_expired = on_token_expired
+        self._on_reauth_success = on_reauth_success
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._latest: Optional[dict] = None
@@ -301,7 +302,8 @@ class GrabPoller:
                         self._token_expired = True
                         # Attempt silent re-authentication before alerting the user
                         reauth_success = await try_silent_reauth(
-                            on_token=self._token_store.save
+                            on_token=self._token_store.save,
+                            on_success=self._on_reauth_success,
                         )
                         if reauth_success:
                             logger.info(

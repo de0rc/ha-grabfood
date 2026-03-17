@@ -1,5 +1,6 @@
 """GrabFood Tracker — web server entry point."""
 import asyncio
+import json
 import logging
 import sys
 import os
@@ -12,7 +13,7 @@ from aiohttp import web, WSMsgType
 from jinja2 import Environment, FileSystemLoader
 
 from tokenstore import TokenStore
-from browser import launch_login, get_state
+from browser import launch_login, get_state, _extract_session_key
 from poller import GrabPoller
 from bridge import Bridge
 
@@ -26,12 +27,11 @@ _LOGGER = logging.getLogger("grab.main")
 
 token_store = TokenStore(path="/data/grab_token.json")
 
-NOVNC_DIR = "/opt/novnc"
+NOVNC_DIR = os.path.realpath("/opt/novnc")
 VNC_HOST = "127.0.0.1"
 VNC_PORT = 5900
 
 _JINJA_ENV = None
-_login_lock = asyncio.Lock()
 
 
 def jinja() -> Environment:
@@ -59,14 +59,16 @@ async def handle_index(request: web.Request) -> web.Response:
 
 
 async def handle_login_start(request: web.Request) -> web.Response:
-    async with _login_lock:
+    login_lock: asyncio.Lock = request.app["login_lock"]
+    async with login_lock:
         if get_state()["running"]:
             return web.json_response({"ok": False, "error": "Login already in progress"})
 
         async def on_token(token: dict):
             await token_store.save(token)
 
-        asyncio.create_task(launch_login(on_token=on_token))
+        bridge: Bridge = request.app["bridge"]
+        asyncio.create_task(launch_login(on_token=on_token, on_success=bridge.restart))
     return web.json_response({"ok": True})
 
 
@@ -93,7 +95,6 @@ async def handle_manual_token(request: web.Request) -> web.Response:
         gfc = (body.get("gfc_session") or "").strip()
         if not authn or not gfc:
             return web.json_response({"ok": False, "error": "Both passenger_authn_token and gfc_session are required"}, status=400)
-        from browser import _extract_session_key
         session_key = _extract_session_key(gfc)
         await token_store.save({
             "passenger_authn_token": authn,
@@ -108,7 +109,7 @@ async def handle_manual_token(request: web.Request) -> web.Response:
 async def handle_grabfood_status(request: web.Request) -> web.Response:
     """Debug endpoint — returns latest polled order data as JSON."""
     poller: GrabPoller = request.app["poller"]
-    return web.json_response(poller.latest or {}, dumps=lambda d, **kw: __import__("json").dumps(d, default=str))
+    return web.json_response(poller.latest or {}, dumps=lambda d, **kw: json.dumps(d, default=str))
 
 
 async def handle_novnc_static(request: web.Request) -> web.FileResponse:
@@ -182,9 +183,11 @@ async def on_startup(app: web.Application):
         token_store=token_store,
         on_update=bridge.update,
         on_token_expired=bridge.notify_token_expired,
+        on_reauth_success=bridge.restart,
     )
     poller.start()
 
+    app["login_lock"] = asyncio.Lock()
     app["poller"] = poller
     app["bridge"] = bridge
     _LOGGER.info("GrabPoller and Bridge started.")
@@ -219,8 +222,11 @@ async def main():
     await site.start()
     _LOGGER.info("Web server running on port 8099")
 
-    while True:
-        await asyncio.sleep(3600)
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except asyncio.CancelledError:
+        pass
 
 
 if __name__ == "__main__":

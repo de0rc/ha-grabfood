@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.15
+
+### Improvements
+- Request a supervisor restart after every successful login or silent reauth —
+  reclaims the memory Python's allocator retains after running Playwright.
+  The session is saved to disk before the restart fires so nothing is lost;
+  the add-on is back up within a few seconds.
+- `bridge.py`: `SUPERVISOR_TOKEN` and `SHOW_DRIVER_MAP` read once at startup
+  and passed explicitly to each function instead of calling `os.environ.get`
+  on every sensor push; removed unused `_notification_url()` helper.
+- `tokenstore.session_data_sync`: reads from in-memory state first instead of
+  disk on every poll cycle, falling back to disk only on cold-start edge cases.
+- `main.py`: `login_lock` created inside `on_startup`; `NOVNC_DIR` uses
+  `os.path.realpath`; `_extract_session_key` imported at module level;
+  keepalive loop handles `CancelledError` cleanly on shutdown.
+- `tokenstore.py`: removed unused `session_data` property.
+- `DOCS.md`: added Memory Management section documenting the supervised restart behaviour.
+
 ## 0.1.9
 
 ### Bug Fixes
