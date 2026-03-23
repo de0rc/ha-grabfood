@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.16
+
+### Security
+- Fix path traversal in noVNC static file handler — `startswith(NOVNC_DIR)` lacked a
+  separator boundary and could match adjacent directories; now uses `startswith(NOVNC_DIR + os.sep)`
+
+### Bug Fixes
+- Store `asyncio.create_task` result in `request.app["login_task"]` — untracked tasks
+  have their exceptions silently discarded if they fail outside the broad inner except
+- Fix token display in `/token/value` — `"..."` was unconditionally appended even when
+  the token is shorter than 20 characters
+
+### Code Quality
+- Merge duplicate `not_home` state/attributes blocks in `push_driver_map` (`bridge.py`)
+- Rename `_extract_session_key` → `extract_session_key` — private-by-convention name
+  was being imported across module boundary in `main.py`
+
+### Dependencies
+- Bump Chrome user-agent from 131 → 134
+- Update pinned deps: `playwright 1.48.0→1.58.0`, `aiohttp 3.10.10→3.13.3`, `jinja2 3.1.4→3.1.6`
+
 ## 0.1.15
 
 ### Improvements
