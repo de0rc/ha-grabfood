@@ -86,17 +86,13 @@ async def push_driver_map(session: aiohttp.ClientSession, data: dict, supervisor
     lon = data.get("driver_lon")
     active = data.get("active_order", False)
 
-    if not active:
-        logger.debug("Driver map push skipped — no active order.")
+    if not active or lat is None or lon is None:
+        if not active:
+            logger.debug("Driver map push skipped — no active order.")
+        else:
+            logger.debug("Driver map push skipped — lat/lon not yet available (driver not assigned?).")
         state = "not_home"
         attributes: dict[str, Any] = {
-            "friendly_name": "GrabFood Driver",
-            "icon": "mdi:moped",
-        }
-    elif lat is None or lon is None:
-        logger.debug("Driver map push skipped — lat/lon not yet available (driver not assigned?).")
-        state = "not_home"
-        attributes = {
             "friendly_name": "GrabFood Driver",
             "icon": "mdi:moped",
         }

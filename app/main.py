@@ -13,7 +13,7 @@ from aiohttp import web, WSMsgType
 from jinja2 import Environment, FileSystemLoader
 
 from tokenstore import TokenStore
-from browser import launch_login, get_state, _extract_session_key
+from browser import launch_login, get_state, extract_session_key
 from poller import GrabPoller
 from bridge import Bridge
 
@@ -68,7 +68,7 @@ async def handle_login_start(request: web.Request) -> web.Response:
             await token_store.save(token)
 
         bridge: Bridge = request.app["bridge"]
-        asyncio.create_task(launch_login(on_token=on_token, on_success=bridge.restart))
+        request.app["login_task"] = asyncio.create_task(launch_login(on_token=on_token, on_success=bridge.restart))
     return web.json_response({"ok": True})
 
 
@@ -83,7 +83,7 @@ async def handle_login_status(request: web.Request) -> web.Response:
 async def handle_token_value(request: web.Request) -> web.Response:
     return web.json_response({
         "has_token": token_store.has_token,
-        "token": token_store.token[:20] + "..." if token_store.has_token else "",
+        "token": (token_store.token[:20] + ("..." if len(token_store.token) > 20 else "")) if token_store.has_token else "",
         "updated_at": token_store.updated_at,
     })
 
@@ -95,7 +95,7 @@ async def handle_manual_token(request: web.Request) -> web.Response:
         gfc = (body.get("gfc_session") or "").strip()
         if not authn or not gfc:
             return web.json_response({"ok": False, "error": "Both passenger_authn_token and gfc_session are required"}, status=400)
-        session_key = _extract_session_key(gfc)
+        session_key = extract_session_key(gfc)
         await token_store.save({
             "passenger_authn_token": authn,
             "gfc_session": gfc,
@@ -116,7 +116,7 @@ async def handle_novnc_static(request: web.Request) -> web.FileResponse:
     filename = request.match_info.get("filename", "vnc.html")
     filepath = os.path.realpath(os.path.join(NOVNC_DIR, filename))
     _LOGGER.debug("noVNC static: %s -> %s", filename, filepath)
-    if not filepath.startswith(NOVNC_DIR) or not os.path.isfile(filepath):
+    if not (filepath == NOVNC_DIR or filepath.startswith(NOVNC_DIR + os.sep)) or not os.path.isfile(filepath):
         _LOGGER.warning("noVNC static not found: %s", filepath)
         raise web.HTTPNotFound()
     return web.FileResponse(filepath)

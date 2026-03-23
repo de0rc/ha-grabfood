@@ -20,7 +20,7 @@ REAUTH_TIMEOUT = 60      # seconds for silent re-authentication attempt
 CHROME_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
+    "Chrome/134.0.0.0 Safari/537.36"
 )
 
 _state = {
@@ -135,7 +135,7 @@ def get_state() -> dict:
     return dict(_state)
 
 
-def _extract_session_key(gfc_session_value: str) -> str:
+def extract_session_key(gfc_session_value: str) -> str:
     """Extract sessionKey from gfc_session JWT payload."""
     try:
         parts = gfc_session_value.split(".")
@@ -263,7 +263,7 @@ async def launch_login(
                     gfc_country = cookie_map.get("gfc_country", "MY").upper()
 
                     if authn and gfc:
-                        session_key = _extract_session_key(gfc)
+                        session_key = extract_session_key(gfc)
                         if not session_key:
                             _LOGGER.warning(
                                 "session_key extraction returned empty — API calls may fail. "
