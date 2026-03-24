@@ -243,10 +243,11 @@ SESSION_RECREATE_INTERVAL = 6 * 3600  # recreate aiohttp session every 6 hours
 
 
 class GrabPoller:
-    def __init__(self, token_store: TokenStore, on_update, on_token_expired):
+    def __init__(self, token_store: TokenStore, on_update, on_token_expired, on_reauth_success=None):
         self._token_store = token_store
         self._on_update = on_update
         self._on_token_expired = on_token_expired
+        self._on_reauth_success = on_reauth_success
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._latest: Optional[dict] = None
@@ -277,15 +278,15 @@ class GrabPoller:
 
     async def _poll_loop(self):
         session = self._new_session()
-        session_created_at = asyncio.get_event_loop().time()
+        session_created_at = asyncio.get_running_loop().time()
 
         try:
             while self._running:
                 # Recreate session every 6 hours to flush connection pool and internal state
-                if asyncio.get_event_loop().time() - session_created_at >= SESSION_RECREATE_INTERVAL:
+                if asyncio.get_running_loop().time() - session_created_at >= SESSION_RECREATE_INTERVAL:
                     await session.close()
                     session = self._new_session()
-                    session_created_at = asyncio.get_event_loop().time()
+                    session_created_at = asyncio.get_running_loop().time()
                     logger.debug("aiohttp session recreated to free memory.")
 
                 sess_data = await asyncio.to_thread(self._token_store.session_data_sync)
@@ -301,7 +302,8 @@ class GrabPoller:
                         self._token_expired = True
                         # Attempt silent re-authentication before alerting the user
                         reauth_success = await try_silent_reauth(
-                            on_token=self._token_store.save
+                            on_token=self._token_store.save,
+                            on_success=self._on_reauth_success,
                         )
                         if reauth_success:
                             logger.info(
@@ -314,6 +316,9 @@ class GrabPoller:
                                 "HA notification sent."
                             )
                             await self._on_token_expired()
+                            # Reset flag so reauth is attempted again next cycle rather
+                            # than being skipped indefinitely after a single failure.
+                            self._token_expired = False
                     await asyncio.sleep(POLL_INTERVAL_IDLE)
                     continue
 

@@ -25,14 +25,20 @@ class TokenStore:
             return json.load(f)
 
     def _write_to_disk(self, payload: dict) -> None:
-        """Sync: write payload dict to disk atomically."""
-        with open(self._path, "w") as f:
+        """Sync: write payload dict to disk atomically via a temp file."""
+        tmp = self._path + ".tmp"
+        with open(tmp, "w") as f:
             json.dump(payload, f)
+        os.replace(tmp, self._path)
 
     def session_data_sync(self) -> dict:
         """Sync accessor used by GrabPoller via asyncio.to_thread.
-        Returns the session data dict, or {} if not available.
+        Returns the in-memory session data dict if valid, otherwise {}.
+        Falls back to disk only if in-memory data is absent (e.g. cold start
+        race before load() has completed, which should not normally happen).
         """
+        if self._data.get("passenger_authn_token") and self._data.get("gfc_session"):
+            return dict(self._data)
         try:
             with open(self._path) as f:
                 saved = json.load(f)
@@ -85,7 +91,7 @@ class TokenStore:
 
     @property
     def token(self) -> str:
-        """Legacy compat — returns passenger_authn_token."""
+        """Returns passenger_authn_token for display purposes."""
         return self._data.get("passenger_authn_token", "")
 
     @property
@@ -95,7 +101,3 @@ class TokenStore:
     @property
     def updated_at(self) -> str:
         return self._updated_at
-
-    @property
-    def session_data(self) -> dict:
-        return dict(self._data)

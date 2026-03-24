@@ -1,5 +1,6 @@
 """GrabFood Tracker — web server entry point."""
 import asyncio
+import json
 import logging
 import sys
 import os
@@ -12,7 +13,7 @@ from aiohttp import web, WSMsgType
 from jinja2 import Environment, FileSystemLoader
 
 from tokenstore import TokenStore
-from browser import launch_login, get_state
+from browser import launch_login, get_state, extract_session_key
 from poller import GrabPoller
 from bridge import Bridge
 
@@ -26,12 +27,11 @@ _LOGGER = logging.getLogger("grab.main")
 
 token_store = TokenStore(path="/data/grab_token.json")
 
-NOVNC_DIR = "/opt/novnc"
+NOVNC_DIR = os.path.realpath("/opt/novnc")
 VNC_HOST = "127.0.0.1"
 VNC_PORT = 5900
 
 _JINJA_ENV = None
-_login_lock = asyncio.Lock()
 
 
 def jinja() -> Environment:
@@ -59,14 +59,16 @@ async def handle_index(request: web.Request) -> web.Response:
 
 
 async def handle_login_start(request: web.Request) -> web.Response:
-    async with _login_lock:
+    login_lock: asyncio.Lock = request.app["login_lock"]
+    async with login_lock:
         if get_state()["running"]:
             return web.json_response({"ok": False, "error": "Login already in progress"})
 
         async def on_token(token: dict):
             await token_store.save(token)
 
-        asyncio.create_task(launch_login(on_token=on_token))
+        bridge: Bridge = request.app["bridge"]
+        request.app["login_task"] = asyncio.create_task(launch_login(on_token=on_token, on_success=bridge.restart))
     return web.json_response({"ok": True})
 
 
@@ -81,7 +83,7 @@ async def handle_login_status(request: web.Request) -> web.Response:
 async def handle_token_value(request: web.Request) -> web.Response:
     return web.json_response({
         "has_token": token_store.has_token,
-        "token": token_store.token[:20] + "..." if token_store.has_token else "",
+        "token": (token_store.token[:20] + ("..." if len(token_store.token) > 20 else "")) if token_store.has_token else "",
         "updated_at": token_store.updated_at,
     })
 
@@ -93,8 +95,7 @@ async def handle_manual_token(request: web.Request) -> web.Response:
         gfc = (body.get("gfc_session") or "").strip()
         if not authn or not gfc:
             return web.json_response({"ok": False, "error": "Both passenger_authn_token and gfc_session are required"}, status=400)
-        from browser import _extract_session_key
-        session_key = _extract_session_key(gfc)
+        session_key = extract_session_key(gfc)
         await token_store.save({
             "passenger_authn_token": authn,
             "gfc_session": gfc,
@@ -108,39 +109,38 @@ async def handle_manual_token(request: web.Request) -> web.Response:
 async def handle_grabfood_status(request: web.Request) -> web.Response:
     """Debug endpoint — returns latest polled order data as JSON."""
     poller: GrabPoller = request.app["poller"]
-    return web.json_response(poller.latest or {}, dumps=lambda d, **kw: __import__("json").dumps(d, default=str))
+    return web.json_response(poller.latest or {}, dumps=lambda d, **kw: json.dumps(d, default=str))
 
 
 async def handle_novnc_static(request: web.Request) -> web.FileResponse:
     filename = request.match_info.get("filename", "vnc.html")
     filepath = os.path.realpath(os.path.join(NOVNC_DIR, filename))
     _LOGGER.debug("noVNC static: %s -> %s", filename, filepath)
-    if not filepath.startswith(NOVNC_DIR) or not os.path.isfile(filepath):
+    if not (filepath == NOVNC_DIR or filepath.startswith(NOVNC_DIR + os.sep)) or not os.path.isfile(filepath):
         _LOGGER.warning("noVNC static not found: %s", filepath)
         raise web.HTTPNotFound()
     return web.FileResponse(filepath)
 
 
 async def handle_websockify(request: web.Request) -> web.WebSocketResponse:
-    _LOGGER.info("WebSocket upgrade request from %s", request.remote)
+    _LOGGER.debug("WebSocket upgrade request from %s", request.remote)
     _LOGGER.debug("WebSocket headers: %s", dict(request.headers))
 
     ws = web.WebSocketResponse(protocols=["binary", "base64"])
     await ws.prepare(request)
-    _LOGGER.info("WebSocket prepared, connecting to VNC %s:%s", VNC_HOST, VNC_PORT)
 
     try:
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(VNC_HOST, VNC_PORT),
             timeout=5.0
         )
-        _LOGGER.info("Connected to VNC server successfully")
+        _LOGGER.debug("Connected to VNC server successfully")
     except asyncio.TimeoutError:
-        _LOGGER.error("Timeout connecting to VNC server at %s:%s", VNC_HOST, VNC_PORT)
+        _LOGGER.debug("WebSocket: VNC not available (no login in progress).")
         await ws.close()
         return ws
     except Exception as exc:
-        _LOGGER.error("Cannot connect to VNC server: %s", exc)
+        _LOGGER.debug("WebSocket: VNC not available: %s", exc)
         await ws.close()
         return ws
 
@@ -171,19 +171,8 @@ async def handle_websockify(request: web.Request) -> web.WebSocketResponse:
             await ws.close()
 
     await asyncio.gather(ws_to_vnc(), vnc_to_ws())
-    _LOGGER.info("WebSocket session ended")
+    _LOGGER.debug("WebSocket session ended")
     return ws
-
-
-async def check_vnc_port():
-    """Log whether VNC port is reachable on startup."""
-    try:
-        reader, writer = await asyncio.open_connection(VNC_HOST, VNC_PORT)
-        writer.close()
-        await writer.wait_closed()
-        _LOGGER.info("VNC port %s:%s is reachable", VNC_HOST, VNC_PORT)
-    except Exception as exc:
-        _LOGGER.error("VNC port %s:%s NOT reachable: %s", VNC_HOST, VNC_PORT, exc)
 
 
 async def on_startup(app: web.Application):
@@ -194,9 +183,11 @@ async def on_startup(app: web.Application):
         token_store=token_store,
         on_update=bridge.update,
         on_token_expired=bridge.notify_token_expired,
+        on_reauth_success=bridge.restart,
     )
     poller.start()
 
+    app["login_lock"] = asyncio.Lock()
     app["poller"] = poller
     app["bridge"] = bridge
     _LOGGER.info("GrabPoller and Bridge started.")
@@ -210,9 +201,6 @@ async def on_cleanup(app: web.Application):
 
 async def main():
     await token_store.load()
-
-    await asyncio.sleep(2)
-    await check_vnc_port()
 
     app = web.Application()
     app.on_startup.append(on_startup)
@@ -234,8 +222,11 @@ async def main():
     await site.start()
     _LOGGER.info("Web server running on port 8099")
 
-    while True:
-        await asyncio.sleep(3600)
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except asyncio.CancelledError:
+        pass
 
 
 if __name__ == "__main__":

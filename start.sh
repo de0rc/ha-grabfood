@@ -15,19 +15,7 @@ else
     export LOG_LEVEL=info
 fi
 
-# Start Xvfb directly as background process
-echo "[grab-login] Starting Xvfb on :99..."
-Xvfb :99 -screen 0 1280x800x24 -ac &
-XVFB_PID=$!
-sleep 1
-
+# Xvfb and x11vnc are started on demand by browser.py when login is triggered.
 export DISPLAY=:99
-echo "[grab-login] Xvfb started (PID $XVFB_PID)"
-
-# Start x11vnc as background process
-echo "[grab-login] Starting x11vnc..."
-x11vnc -display :99 -nopw -listen 127.0.0.1 -rfbport 5900 -forever -shared -quiet &
-sleep 1
-echo "[grab-login] x11vnc started"
 
 exec python3 /app/main.py

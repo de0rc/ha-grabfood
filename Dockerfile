@@ -29,9 +29,9 @@ RUN git clone --depth 1 --branch v1.5.0 https://github.com/novnc/noVNC.git /opt/
 
 # Install Python deps from PyPI directly (pinned for reproducibility)
 RUN pip3 install --no-cache-dir --break-system-packages \
-    playwright==1.48.0 \
-    aiohttp==3.10.10 \
-    jinja2==3.1.4
+    playwright==1.58.0 \
+    aiohttp==3.13.3 \
+    jinja2==3.1.6
 
 # Install Playwright's bundled Chromium (always version-matched)
 RUN playwright install chromium \
