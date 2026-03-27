@@ -40,4 +40,7 @@ RUN playwright install chromium \
 WORKDIR /app
 COPY start.sh /etc/services.d/grabfood/run
 RUN chmod +x /etc/services.d/grabfood/run
+# config.yaml changes on every version bump — copying it first ensures Docker
+# invalidates the COPY app/ layer whenever the version changes.
+COPY config.yaml /app/config.yaml
 COPY app/ /app/

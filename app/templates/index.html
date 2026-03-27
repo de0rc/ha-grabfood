@@ -250,7 +250,12 @@
     <span class="logo-tracker">Tracker</span>
   </div>
 
-  {% if has_token %}
+  {% if reauth_in_progress %}
+    <div class="session-badge badge-reauth">
+      <div class="dot"></div>
+      Re-authenticating
+    </div>
+  {% elif has_token %}
     <div class="session-badge badge-active">
       <div class="dot"></div>
       Session active

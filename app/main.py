@@ -48,12 +48,14 @@ async def handle_index(request: web.Request) -> web.Response:
         token_updated_at_display = raw_ts[:19].replace("T", " ") + " UTC"
     else:
         token_updated_at_display = ""
+    browser_state = get_state()
     tmpl = jinja().get_template("index.html")
     html = tmpl.render(
         ingress_path=ingress_path,
         has_token=token_store.has_token,
         token_updated_at_display=token_updated_at_display,
-        browser_state=get_state(),
+        browser_state=browser_state,
+        reauth_in_progress=browser_state.get("status") == "reauth",
     )
     return web.Response(text=html, content_type="text/html")
 
@@ -106,10 +108,17 @@ async def handle_manual_token(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
 
-async def handle_grabfood_status(request: web.Request) -> web.Response:
-    """Debug endpoint — returns latest polled order data as JSON."""
+async def handle_force_poll(request: web.Request) -> web.Response:
+    """Immediately wake the poll loop, skipping the current sleep interval."""
     poller: GrabPoller = request.app["poller"]
-    return web.json_response(poller.latest or {}, dumps=lambda d, **kw: json.dumps(d, default=str))
+    poller.force_poll()
+    return web.json_response({"ok": True})
+
+
+async def handle_grabfood_status(request: web.Request) -> web.Response:
+    """Debug endpoint — returns latest polled orders as JSON."""
+    poller: GrabPoller = request.app["poller"]
+    return web.json_response(poller.latest, dumps=lambda d, **kw: json.dumps(d, default=str))
 
 
 async def handle_novnc_static(request: web.Request) -> web.FileResponse:
@@ -175,17 +184,42 @@ async def handle_websockify(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+def _install_lovelace_card() -> None:
+    """Copy grabfood-map-card.js to /config/www/ so it's available as /local/grabfood-map-card.js."""
+    import shutil
+    src = "/app/www/grabfood-map-card.js"
+    dest_dir = "/config/www"
+    dest = os.path.join(dest_dir, "grabfood-map-card.js")
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        shutil.copy2(src, dest)
+        _LOGGER.info("Installed Lovelace card to %s", dest)
+    except Exception as e:
+        _LOGGER.warning("Could not install Lovelace card: %s", e)
+
+
 async def on_startup(app: web.Application):
+    await asyncio.to_thread(_install_lovelace_card)
+
     bridge = Bridge()
     await bridge.start()
+    await bridge.cleanup_legacy()
+    await bridge.register_card_resource()
 
     poller = GrabPoller(
         token_store=token_store,
         on_update=bridge.update,
         on_token_expired=bridge.notify_token_expired,
         on_reauth_success=bridge.restart,
+        on_state_change=bridge.fire_event,
     )
     poller.start()
+
+    # Push cached orders immediately so sensor.grabfood_orders is available
+    # right after reboot without waiting for the first poll to complete.
+    if poller.latest:
+        _LOGGER.info("Restoring %d cached order(s) to HA on startup.", len(poller.latest))
+        await bridge.update(poller.latest)
 
     app["login_lock"] = asyncio.Lock()
     app["poller"] = poller
@@ -211,6 +245,7 @@ async def main():
     app.router.add_get("/login/status", handle_login_status)
     app.router.add_get("/token/value", handle_token_value)
     app.router.add_post("/token/manual", handle_manual_token)
+    app.router.add_post("/poll/force", handle_force_poll)
     app.router.add_get("/grabfood/status", handle_grabfood_status)
     app.router.add_get("/novnc/websockify", handle_websockify)
     app.router.add_get("/novnc/{tail:api/hassio_ingress/.+/novnc/websockify}", handle_websockify)

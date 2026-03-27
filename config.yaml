@@ -1,7 +1,8 @@
 name: "GrabFood Tracker"
 description: "Tracks GrabFood delivery orders in Home Assistant."
-version: "0.1.16"
+version: "0.2.0"
 slug: "grabfood_tracker"
+url: "https://github.com/de0rc/ha-grabfood"
 init: false
 arch:
   - aarch64
@@ -17,8 +18,6 @@ hassio_role: default
 auth_api: true
 homeassistant_api: true
 options:
-  show_driver_map: false
   log_level: "info"
 schema:
-  show_driver_map: bool
   log_level: "list(debug|info|warning|error)"

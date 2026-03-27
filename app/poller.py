@@ -15,10 +15,11 @@ from tokenstore import TokenStore
 
 logger = logging.getLogger(__name__)
 
-# onlyOngoingOrders=true returns active orders; fallback to false for last completed order
+# Fetch all ongoing orders — no artificial limit so multiple simultaneous orders are captured.
+# Fallback uses limit=1: we only need the single last completed order for sensor context.
 GRAB_ORDER_HISTORY_URL = (
     "https://food.grab.com/proxy/foodweb/v2/order/history"
-    "?input.limit=1&input.offset=0&input.onlyOngoingOrders=true"
+    "?input.limit=10&input.offset=0&input.onlyOngoingOrders=true"
 )
 GRAB_ORDER_HISTORY_URL_FALLBACK = (
     "https://food.grab.com/proxy/foodweb/v2/order/history"
@@ -44,6 +45,7 @@ IDLE_STATES = {
     "CANCELLED_DRIVER",
     "CANCELLED_MAX",
     "FAILED",
+    "UNKNOWN",  # no recognisable state — treat as idle, not active
 }
 
 POLL_INTERVAL_FAST = 30       # FOOD_COLLECTED, DRIVER_ARRIVED — poll frequently
@@ -57,6 +59,14 @@ class TokenExpiredError(Exception):
 
 
 def _extract_order_data(order: dict) -> dict:
+    # Order ID — try common field names used by the Grab API
+    order_id = (
+        order.get("orderID")
+        or order.get("orderCode")
+        or order.get("shortOrderNumber")
+        or order.get("id")
+    )
+
     # Restaurant name
     restaurant = None
     try:
@@ -116,6 +126,7 @@ def _extract_order_data(order: dict) -> dict:
     is_active = state in FAST_STATES or state in ACTIVE_STATES
 
     return {
+        "order_id": order_id,
         "order_status": state,
         "restaurant": restaurant,
         "driver_lat": driver_lat,
@@ -196,70 +207,83 @@ async def _fetch_orders_from_url(
     return None
 
 
-async def fetch_latest_order(session: aiohttp.ClientSession, sess_data: dict) -> Optional[dict]:
-    """Fetch latest order using cookies exactly like the browser does.
+async def fetch_orders(session: aiohttp.ClientSession, sess_data: dict) -> list[dict]:
+    """Fetch all current orders using cookies exactly like the browser does.
 
     Strategy:
-      1. Try onlyOngoingOrders=true — returns the active order if one exists.
-      2. If empty, fall back to onlyOngoingOrders=false — returns last completed order.
-         This ensures we always have something to show in HA sensors.
+      1. Try onlyOngoingOrders=true — returns all active orders (no limit).
+      2. If empty, fall back to onlyOngoingOrders=false (limit=1) — returns last
+         completed order so sensors always have something to show.
 
+    Returns a list of extracted order dicts (may be empty on network error).
     Raises TokenExpiredError if the session is expired.
     """
-    # Step 1: try ongoing orders
+    # Step 1: all ongoing orders
     result = await _fetch_orders_from_url(session, sess_data, GRAB_ORDER_HISTORY_URL)
 
     if result:
-        logger.debug("Ongoing order found via onlyOngoingOrders=true.")
-        try:
-            return _extract_order_data(result[0])
-        except Exception as e:
-            logger.exception(
-                "_extract_order_data failed on ongoing order: %s | raw: %s",
-                e, str(result[0])[:500]
-            )
-            return None
+        logger.debug("Fetched %d ongoing order(s).", len(result))
+        orders = []
+        for raw in result:
+            try:
+                orders.append(_extract_order_data(raw))
+            except Exception as e:
+                logger.exception("_extract_order_data failed: %s | raw: %s", e, str(raw)[:500])
+        return orders
 
-    # Step 2: no ongoing order — fall back to last order for sensor state
+    # Step 2: no ongoing orders — fall back to last completed for sensor context
     logger.debug("No ongoing orders — falling back to order history.")
     await asyncio.sleep(3)  # avoid 429 rate limit
     result = await _fetch_orders_from_url(session, sess_data, GRAB_ORDER_HISTORY_URL_FALLBACK)
 
     if not result:
         logger.debug("No orders in fallback response.")
-        return None
+        return []
 
     try:
-        return _extract_order_data(result[0])
+        return [_extract_order_data(result[0])]
     except Exception as e:
-        logger.exception(
-            "_extract_order_data failed on fallback order: %s | raw: %s",
-            e, str(result[0])[:500]
-        )
-        return None
+        logger.exception("_extract_order_data failed on fallback: %s | raw: %s", e, str(result[0])[:500])
+        return []
 
 
 SESSION_RECREATE_INTERVAL = 6 * 3600  # recreate aiohttp session every 6 hours
 
 
 class GrabPoller:
-    def __init__(self, token_store: TokenStore, on_update, on_token_expired, on_reauth_success=None):
+    def __init__(self, token_store: TokenStore, on_update, on_token_expired, on_reauth_success=None, on_state_change=None):
         self._token_store = token_store
         self._on_update = on_update
         self._on_token_expired = on_token_expired
         self._on_reauth_success = on_reauth_success
+        self._on_state_change = on_state_change
         self._running = False
         self._task: Optional[asyncio.Task] = None
-        self._latest: Optional[dict] = None
+        self._latest: list[dict] = []
         self._token_expired = False
+        self._last_states: dict[str, str] = {}  # order_id -> last known status
+        self._wake = asyncio.Event()
 
     @property
-    def latest(self) -> Optional[dict]:
+    def latest(self) -> list[dict]:
         return self._latest
+
+    def force_poll(self) -> None:
+        """Wake the poll loop immediately, skipping the current sleep interval."""
+        self._wake.set()
 
     def start(self):
         if not self._running:
             self._running = True
+            last = self._token_store.load_order_sync()
+            if last:
+                # Handle both old single-dict format and new list format on disk
+                orders = last if isinstance(last, list) else [last]
+                self._latest = orders
+                for order in orders:
+                    oid = order.get("order_id") or "unknown"
+                    self._last_states[oid] = order.get("order_status", "")
+                logger.debug("Pre-loaded %d order(s) from disk.", len(orders))
             self._task = asyncio.create_task(self._poll_loop())
             logger.info("GrabPoller started.")
 
@@ -296,7 +320,7 @@ class GrabPoller:
                     continue
 
                 try:
-                    data = await fetch_latest_order(session, sess_data)
+                    data = await fetch_orders(session, sess_data)
                 except TokenExpiredError:
                     if not self._token_expired:
                         self._token_expired = True
@@ -327,24 +351,42 @@ class GrabPoller:
 
                 if data:
                     self._latest = data
+                    await asyncio.to_thread(self._token_store.save_order_sync, data)
                     try:
                         await self._on_update(data, was_expired=was_expired)
                     except Exception as e:
                         logger.exception("on_update error: %s", e)
-                    state = data.get("order_status", "")
-                    if state in FAST_STATES:
+                    # Fire state-change events for any order whose status changed
+                    for order in data:
+                        oid = order.get("order_id") or "unknown"
+                        new_state = order.get("order_status", "")
+                        if self._last_states.get(oid) != new_state:
+                            self._last_states[oid] = new_state
+                            if self._on_state_change:
+                                try:
+                                    await self._on_state_change(order)
+                                except Exception as e:
+                                    logger.exception("on_state_change error: %s", e)
+                    # Poll interval driven by the most urgent active order
+                    statuses = {o.get("order_status", "") for o in data}
+                    if statuses & FAST_STATES:
                         interval = POLL_INTERVAL_FAST
-                    elif state in IDLE_STATES:
-                        interval = POLL_INTERVAL_IDLE
-                    else:
+                    elif statuses & ACTIVE_STATES:
                         interval = POLL_INTERVAL_ACTIVE
+                    else:
+                        interval = POLL_INTERVAL_IDLE
                     logger.info(
-                        "Order: %s | active=%s | next poll in %ss",
-                        state, data.get("active_order"), interval
+                        "%d order(s): %s | next poll in %ss",
+                        len(data), ", ".join(sorted(statuses)), interval
                     )
                 else:
                     interval = POLL_INTERVAL_IDLE
 
-                await asyncio.sleep(interval)
+                try:
+                    await asyncio.wait_for(self._wake.wait(), timeout=interval)
+                    self._wake.clear()
+                    logger.debug("Poll woken early by force_poll().")
+                except asyncio.TimeoutError:
+                    pass
         finally:
             await session.close()

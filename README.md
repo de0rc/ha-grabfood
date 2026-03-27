@@ -1,28 +1,37 @@
 # GrabFood Tracker
 
-A Home Assistant add-on that tracks your GrabFood delivery orders and exposes them as sensors in Home Assistant.
+A Home Assistant add-on that tracks your GrabFood delivery orders and exposes them as sensors and a live map card.
 
 ## Features
 
-- Tracks live GrabFood order status
-- Exposes order data as HA sensors (status, ETA, restaurant, driver location)
-- Optional driver map tracker (`device_tracker.grabfood_driver`)
+- Tracks live GrabFood order status — supports multiple simultaneous orders
+- Single `sensor.grabfood_orders` entity (state = active count, attributes hold full order list)
+- Custom Lovelace map card with driver pins, route lines, and ETA header
 - Browser-based login via noVNC — no manual cookie extraction needed
-- Manual session entry as a fallback login option
 - Automatic re-authentication on session expiry using saved browser profile
-- Persistent session across add-on restarts
-- Configurable log level for easy debugging
+- Persistent session and sensor state across add-on restarts
 
-## Sensors Created
+## Sensor
 
-| Entity | Description |
-|--------|-------------|
-| `sensor.grabfood_order_status` | Current order state (e.g. Allocating, Food Collected, Completed) |
-| `sensor.grabfood_eta` | Estimated delivery time (ISO timestamp) |
-| `sensor.grabfood_eta_minutes` | ETA in minutes |
-| `sensor.grabfood_restaurant` | Restaurant name |
-| `sensor.grabfood_active_order` | Whether an order is currently active (`on`/`off`) |
-| `device_tracker.grabfood_driver` | Driver location on map (optional) |
+| Entity | State | Attributes |
+|--------|-------|------------|
+| `sensor.grabfood_orders` | Active order count (integer) | `orders` list, `active_count` |
+
+Each item in `orders` contains: `order_id`, `order_status`, `restaurant`, `eta`, `eta_minutes`, `active_order`.
+
+## Map Card
+
+The add-on ships a custom Lovelace card that is automatically installed and registered on startup.
+
+```yaml
+type: custom:grabfood-map-card
+entity: sensor.grabfood_orders
+```
+
+- Driver pins (one per active order, distinct colours)
+- OSRM route lines from each driver to home
+- Restaurant name + ETA header below the map
+- Automatic dark mode, fit-to-all button, visual editor
 
 ## Installation
 
@@ -37,28 +46,25 @@ A Home Assistant add-on that tracks your GrabFood delivery orders and exposes th
 
 4. Click **Start Login** — a browser window will open via noVNC.
 
-5. Log in to your GrabFood account. The session will be captured automatically.
+5. Log in to your GrabFood account. The session is captured automatically.
 
-> **Alternative:** If the browser login doesn't work in your environment, use the **Manual session entry** panel at the bottom of the Web UI to paste your `passenger_authn_token` and `gfc_session` cookies directly.
+> **Alternative:** If the browser login doesn't work in your environment, use the **Manual session entry** panel to paste your `passenger_authn_token` and `gfc_session` cookies directly.
 
 ## Configuration
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `show_driver_map` | `false` | Enable driver location tracking on HA map |
 | `log_level` | `info` | Log verbosity: `debug`, `info`, `warning`, `error` |
-
-## How It Works
-
-The add-on launches a Chromium browser (via Playwright) on a virtual display (Xvfb), navigates to the GrabFood login page, and captures session cookies once you log in. These cookies are then used to poll the GrabFood API every 30–300 seconds depending on order state.
 
 ## Poll Intervals
 
 | State | Interval |
 |-------|----------|
-| `FOOD_COLLECTED`, `DRIVER_ARRIVED` | 30 seconds |
-| `ALLOCATING`, `PICKING_UP`, `DRIVER_AT_STORE` | 60 seconds |
-| `COMPLETED`, `CANCELLED`, `FAILED` | 5 minutes |
+| `FOOD_COLLECTED`, `DRIVER_ARRIVED` | 30 s |
+| `ALLOCATING`, `PICKING_UP`, `DRIVER_AT_STORE` | 60 s |
+| `COMPLETED`, `CANCELLED`, idle | 5 min |
+
+Interval is driven by the most urgent active order when multiple orders are in flight.
 
 ## Requirements
 

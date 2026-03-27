@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
+from typing import Optional
 
 _LOGGER = logging.getLogger("grab.tokenstore")
 
@@ -101,3 +102,30 @@ class TokenStore:
     @property
     def updated_at(self) -> str:
         return self._updated_at
+
+    # ------------------------------------------------------------------
+    # Order data persistence — last known order survives restarts
+    # ------------------------------------------------------------------
+
+    _ORDER_PATH = "/data/grab_order.json"
+
+    def save_order_sync(self, data: list[dict]) -> None:
+        """Sync: write last orders list to disk. Called via asyncio.to_thread."""
+        try:
+            tmp = self._ORDER_PATH + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(data, f, default=str)
+            os.replace(tmp, self._ORDER_PATH)
+        except Exception as e:
+            _LOGGER.warning("Failed to save order data: %s", e)
+
+    def load_order_sync(self) -> Optional[list[dict] | dict]:
+        """Sync: read last orders from disk. Returns list (new format) or dict (old format, handled in start())."""
+        try:
+            with open(self._ORDER_PATH) as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            _LOGGER.warning("Failed to load order data: %s", e)
+            return None

@@ -7,7 +7,7 @@ import os
 import shutil
 import subprocess
 import signal
-from typing import Callable, Optional
+from typing import Awaitable, Callable, Optional
 
 _LOGGER = logging.getLogger("grab.browser")
 
@@ -153,7 +153,7 @@ def extract_session_key(gfc_session_value: str) -> str:
 async def launch_login(
     on_token: Callable[[dict], None],
     silent: bool = False,
-    on_success: Optional[Callable[[], None]] = None,
+    on_success: Optional[Callable[[], Awaitable[None]]] = None,
 ) -> bool:
     """Launch headed Chromium, navigate to Grab login, capture all required session cookies.
 
@@ -342,7 +342,7 @@ async def launch_login(
 
 async def try_silent_reauth(
     on_token: Callable[[dict], None],
-    on_success: Optional[Callable[[], None]] = None,
+    on_success: Optional[Callable[[], Awaitable[None]]] = None,
 ) -> bool:
     """Attempt silent re-authentication using the saved browser profile.
     Returns True if new session cookies were captured, False otherwise.
