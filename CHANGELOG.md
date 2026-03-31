@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1
+
+### Bug fixes
+
+- **Map card sidebar overlap fixed** — on the HA companion app, opening the sidebar caused the
+  map card to render above it. Fixed by adding `position: relative; z-index: 0` to `:host`,
+  which creates a contained stacking context so Leaflet's internal z-indexes (up to 1000)
+  no longer compete with the sidebar overlay in the outer document.
+
 ## 0.2.0
 
 ### Breaking changes

@@ -11,10 +11,10 @@ LEAFLET_CSS = r"""
 """.replace("IMGBASE", LEAFLET_IMG_BASE)
 
 CARD_TEMPLATE = r"""
-// GrabFood Tracker — Lovelace map card v0.2.0
+// GrabFood Tracker — Lovelace map card v0.2.1
 // Displays home pin, active driver pins, and OSRM routes for all simultaneous orders.
 
-const _VERSION = '0.2.0';
+const _VERSION = '0.2.1';
 const _ORDER_COLORS = ['#00B14F', '#FF6B35', '#4ECDC4', '#45B7D1', '#9B59B6'];
 const _OSRM_BASE = 'https://router.project-osrm.org/route/v1/driving/';
 const _LEAFLET_IMG = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/images/';
@@ -94,7 +94,7 @@ class GrabFoodMapCard extends HTMLElement {
       ? `width: 100%; aspect-ratio: ${this._aspectRatio};`
       : `width: 100%; height: ${this._height}px;`;
     style.textContent = LEAFLET_CSS_PLACEHOLDER + `
-      :host { display: flex; flex-direction: column; border-radius: var(--ha-card-border-radius, 12px); overflow: hidden; }
+      :host { display: flex; flex-direction: column; border-radius: var(--ha-card-border-radius, 12px); overflow: hidden; position: relative; z-index: 0; }
       #map { ${mapSize} }
       #map.dark .leaflet-bar a {
         background-color: #2d2d2d;

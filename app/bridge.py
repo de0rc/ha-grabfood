@@ -17,7 +17,7 @@ SENSOR_PREFIX = "sensor.grabfood"
 ORDERS_ENTITY = f"{SENSOR_PREFIX}_orders"
 
 # Must match version in config.yaml and app/www/build_card.py _VERSION constant.
-ADDON_VERSION = "0.2.0"
+ADDON_VERSION = "0.2.1"
 CARD_URL = f"/local/grabfood-map-card.js?v={ADDON_VERSION}"
 CARD_URL_BASE = "/local/grabfood-map-card.js"
 
