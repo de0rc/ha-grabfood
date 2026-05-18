@@ -32,6 +32,7 @@ entity: sensor.grabfood_orders
 - OSRM route lines from each driver to home
 - Restaurant name + ETA header below the map
 - Automatic dark mode, fit-to-all button, visual editor
+- Optional `osrm_url` config to point at a self-hosted routing server
 
 ## Installation
 

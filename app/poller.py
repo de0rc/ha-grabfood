@@ -6,14 +6,14 @@ Sends cookies exactly as the browser does, not Authorization: Bearer.
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Awaitable, Callable, Optional
 
 import aiohttp
 
 from browser import CHROME_USER_AGENT, try_silent_reauth
 from tokenstore import TokenStore
 
-logger = logging.getLogger(__name__)
+_LOGGER = logging.getLogger("grab.poller")
 
 # Fetch all ongoing orders — no artificial limit so multiple simultaneous orders are captured.
 # Fallback uses limit=1: we only need the single last completed order for sensor context.
@@ -51,6 +51,7 @@ IDLE_STATES = {
 POLL_INTERVAL_FAST = 30       # FOOD_COLLECTED, DRIVER_ARRIVED — poll frequently
 POLL_INTERVAL_ACTIVE = 60     # ALLOCATING, PICKING_UP, DRIVER_AT_STORE — 60s
 POLL_INTERVAL_IDLE = 300      # COMPLETED, CANCELLED etc — 5 mins
+FALLBACK_RATE_LIMIT_DELAY = 3 # seconds between primary and fallback API requests
 
 
 class TokenExpiredError(Exception):
@@ -75,7 +76,7 @@ def _extract_order_data(order: dict) -> dict:
             ["merchantCartWithQuoteList"][0]["merchantInfoObj"]["name"]
         )
     except (KeyError, IndexError, TypeError):
-        logger.debug("restaurant name not extractable from snapshotDetail — field may be absent")
+        _LOGGER.debug("restaurant name not extractable from snapshotDetail — field may be absent")
 
     # Driver location from driverTrack (driver field is always null)
     driver_track = order.get("driverTrack") or {}
@@ -87,9 +88,9 @@ def _extract_order_data(order: dict) -> dict:
             driver_lat = loc["latitude"]
             driver_lon = loc["longitude"]
         else:
-            logger.debug("driver lat/lon not available in driverTrack.location: %s", loc)
+            _LOGGER.debug("driver lat/lon not available in driverTrack.location: %s", loc)
     except (KeyError, TypeError):
-        logger.debug("driverTrack.location parse error")
+        _LOGGER.debug("driverTrack.location parse error")
 
     # ETA absolute time from orderMeta
     eta = None
@@ -101,22 +102,22 @@ def _extract_order_data(order: dict) -> dict:
             else:
                 eta = str(raw_eta)
         else:
-            logger.debug("orderMeta.expectedTime is present but empty")
+            _LOGGER.debug("orderMeta.expectedTime is present but empty")
     except (KeyError, TypeError):
-        logger.debug("eta not extractable from orderMeta — field may be absent")
+        _LOGGER.debug("eta not extractable from orderMeta — field may be absent")
 
     # ETA in minutes from driverTrack
     eta_minutes = None
     try:
         eta_minutes = driver_track.get("minETAInMin")
         if eta_minutes is None:
-            logger.debug("driverTrack.minETAInMin not present")
+            _LOGGER.debug("driverTrack.minETAInMin not present")
     except (KeyError, TypeError):
-        logger.debug("eta_minutes parse error from driverTrack")
+        _LOGGER.debug("eta_minutes parse error from driverTrack")
 
     state = order.get("orderState")
     if not state:
-        logger.warning(
+        _LOGGER.warning(
             "orderState missing from order response — sensors will show unknown. "
             "Top-level order keys: %s", list(order.keys())
         )
@@ -171,14 +172,14 @@ async def _fetch_orders_from_url(
             timeout=aiohttp.ClientTimeout(total=15),
         ) as resp:
             if resp.status == 401:
-                logger.error(
+                _LOGGER.error(
                     "GrabFood API 401 at %s — session expired, attempting silent re-authentication.",
                     url
                 )
                 raise TokenExpiredError()
             if resp.status != 200:
                 text = await resp.text()
-                logger.warning(
+                _LOGGER.warning(
                     "GrabFood API HTTP %s at %s — response: %s",
                     resp.status, url, text[:500]
                 )
@@ -191,7 +192,7 @@ async def _fetch_orders_from_url(
             )
             orders = response_block.get("orders", [])
             if not orders:
-                logger.debug(
+                _LOGGER.debug(
                     "Empty orders response from %s. Top-level keys: %s",
                     url, list(body.keys())
                 )
@@ -199,11 +200,11 @@ async def _fetch_orders_from_url(
     except TokenExpiredError:
         raise
     except asyncio.TimeoutError:
-        logger.warning("GrabFood API timed out at %s.", url)
+        _LOGGER.warning("GrabFood API timed out at %s.", url)
     except aiohttp.ClientError as e:
-        logger.warning("GrabFood API client error at %s: %s", url, e)
+        _LOGGER.warning("GrabFood API client error at %s: %s", url, e)
     except Exception as e:
-        logger.exception("Unexpected error fetching %s: %s", url, e)
+        _LOGGER.exception("Unexpected error fetching %s: %s", url, e)
     return None
 
 
@@ -222,28 +223,28 @@ async def fetch_orders(session: aiohttp.ClientSession, sess_data: dict) -> list[
     result = await _fetch_orders_from_url(session, sess_data, GRAB_ORDER_HISTORY_URL)
 
     if result:
-        logger.debug("Fetched %d ongoing order(s).", len(result))
+        _LOGGER.debug("Fetched %d ongoing order(s).", len(result))
         orders = []
         for raw in result:
             try:
                 orders.append(_extract_order_data(raw))
             except Exception as e:
-                logger.exception("_extract_order_data failed: %s | raw: %s", e, str(raw)[:500])
+                _LOGGER.exception("_extract_order_data failed: %s | raw: %s", e, str(raw)[:500])
         return orders
 
     # Step 2: no ongoing orders — fall back to last completed for sensor context
-    logger.debug("No ongoing orders — falling back to order history.")
-    await asyncio.sleep(3)  # avoid 429 rate limit
+    _LOGGER.debug("No ongoing orders — falling back to order history.")
+    await asyncio.sleep(FALLBACK_RATE_LIMIT_DELAY)
     result = await _fetch_orders_from_url(session, sess_data, GRAB_ORDER_HISTORY_URL_FALLBACK)
 
     if not result:
-        logger.debug("No orders in fallback response.")
+        _LOGGER.debug("No orders in fallback response.")
         return []
 
     try:
         return [_extract_order_data(result[0])]
     except Exception as e:
-        logger.exception("_extract_order_data failed on fallback: %s | raw: %s", e, str(result[0])[:500])
+        _LOGGER.exception("_extract_order_data failed on fallback: %s | raw: %s", e, str(result[0])[:500])
         return []
 
 
@@ -251,7 +252,14 @@ SESSION_RECREATE_INTERVAL = 6 * 3600  # recreate aiohttp session every 6 hours
 
 
 class GrabPoller:
-    def __init__(self, token_store: TokenStore, on_update, on_token_expired, on_reauth_success=None, on_state_change=None):
+    def __init__(
+        self,
+        token_store: TokenStore,
+        on_update: Callable[[list[dict], bool], Awaitable[None]],
+        on_token_expired: Callable[[], Awaitable[None]],
+        on_reauth_success: Optional[Callable[[], Awaitable[None]]] = None,
+        on_state_change: Optional[Callable[[dict], Awaitable[None]]] = None,
+    ):
         self._token_store = token_store
         self._on_update = on_update
         self._on_token_expired = on_token_expired
@@ -283,15 +291,15 @@ class GrabPoller:
                 for order in orders:
                     oid = order.get("order_id") or "unknown"
                     self._last_states[oid] = order.get("order_status", "")
-                logger.debug("Pre-loaded %d order(s) from disk.", len(orders))
+                _LOGGER.debug("Pre-loaded %d order(s) from disk.", len(orders))
             self._task = asyncio.create_task(self._poll_loop())
-            logger.info("GrabPoller started.")
+            _LOGGER.info("GrabPoller started.")
 
     def stop(self):
         self._running = False
         if self._task:
             self._task.cancel()
-            logger.info("GrabPoller stopped.")
+            _LOGGER.info("GrabPoller stopped.")
 
     def _new_session(self) -> aiohttp.ClientSession:
         """Create a new aiohttp session with DummyCookieJar.
@@ -311,11 +319,11 @@ class GrabPoller:
                     await session.close()
                     session = self._new_session()
                     session_created_at = asyncio.get_running_loop().time()
-                    logger.debug("aiohttp session recreated to free memory.")
+                    _LOGGER.debug("aiohttp session recreated to free memory.")
 
                 sess_data = await asyncio.to_thread(self._token_store.session_data_sync)
                 if not sess_data:
-                    logger.info("No session on disk yet — waiting 30s...")
+                    _LOGGER.info("No session on disk yet — waiting 30s...")
                     await asyncio.sleep(30)
                     continue
 
@@ -330,12 +338,12 @@ class GrabPoller:
                             on_success=self._on_reauth_success,
                         )
                         if reauth_success:
-                            logger.info(
+                            _LOGGER.info(
                                 "Silent re-authentication succeeded — resuming polling."
                             )
                             self._token_expired = False
                         else:
-                            logger.error(
+                            _LOGGER.error(
                                 "Silent re-authentication failed — manual re-login required. "
                                 "HA notification sent."
                             )
@@ -355,7 +363,7 @@ class GrabPoller:
                     try:
                         await self._on_update(data, was_expired=was_expired)
                     except Exception as e:
-                        logger.exception("on_update error: %s", e)
+                        _LOGGER.exception("on_update error: %s", e)
                     # Fire state-change events for any order whose status changed
                     for order in data:
                         oid = order.get("order_id") or "unknown"
@@ -366,7 +374,7 @@ class GrabPoller:
                                 try:
                                     await self._on_state_change(order)
                                 except Exception as e:
-                                    logger.exception("on_state_change error: %s", e)
+                                    _LOGGER.exception("on_state_change error: %s", e)
                     # Poll interval driven by the most urgent active order
                     statuses = {o.get("order_status", "") for o in data}
                     if statuses & FAST_STATES:
@@ -375,7 +383,12 @@ class GrabPoller:
                         interval = POLL_INTERVAL_ACTIVE
                     else:
                         interval = POLL_INTERVAL_IDLE
-                    logger.info(
+                    unknown = statuses - FAST_STATES - ACTIVE_STATES - IDLE_STATES - {""}
+                    if unknown:
+                        _LOGGER.warning(
+                            "Unrecognised order state(s) — treating as idle: %s", unknown
+                        )
+                    _LOGGER.info(
                         "%d order(s): %s | next poll in %ss",
                         len(data), ", ".join(sorted(statuses)), interval
                     )
@@ -385,7 +398,7 @@ class GrabPoller:
                 try:
                     await asyncio.wait_for(self._wake.wait(), timeout=interval)
                     self._wake.clear()
-                    logger.debug("Poll woken early by force_poll().")
+                    _LOGGER.debug("Poll woken early by force_poll().")
                 except asyncio.TimeoutError:
                     pass
         finally:

@@ -31,15 +31,6 @@ NOVNC_DIR = os.path.realpath("/opt/novnc")
 VNC_HOST = "127.0.0.1"
 VNC_PORT = 5900
 
-_JINJA_ENV = None
-
-
-def jinja() -> Environment:
-    global _JINJA_ENV
-    if _JINJA_ENV is None:
-        _JINJA_ENV = Environment(loader=FileSystemLoader("/app/templates"), autoescape=True)
-    return _JINJA_ENV
-
 
 async def handle_index(request: web.Request) -> web.Response:
     ingress_path = request.headers.get("X-Ingress-Path", "")
@@ -49,7 +40,7 @@ async def handle_index(request: web.Request) -> web.Response:
     else:
         token_updated_at_display = ""
     browser_state = get_state()
-    tmpl = jinja().get_template("index.html")
+    tmpl = request.app["jinja"].get_template("index.html")
     html = tmpl.render(
         ingress_path=ingress_path,
         has_token=token_store.has_token,
@@ -66,8 +57,11 @@ async def handle_login_start(request: web.Request) -> web.Response:
         if get_state()["running"]:
             return web.json_response({"ok": False, "error": "Login already in progress"})
 
+        poller: GrabPoller = request.app["poller"]
+
         async def on_token(token: dict):
             await token_store.save(token)
+            poller.force_poll()
 
         bridge: Bridge = request.app["bridge"]
         request.app["login_task"] = asyncio.create_task(launch_login(on_token=on_token, on_success=bridge.restart))
@@ -83,9 +77,10 @@ async def handle_login_status(request: web.Request) -> web.Response:
 
 
 async def handle_token_value(request: web.Request) -> web.Response:
+    token = token_store.token
     return web.json_response({
-        "has_token": token_store.has_token,
-        "token": (token_store.token[:20] + ("..." if len(token_store.token) > 20 else "")) if token_store.has_token else "",
+        "has_token": bool(token),
+        "token": (token[:20] + "...") if len(token) > 20 else token,
         "updated_at": token_store.updated_at,
     })
 
@@ -199,6 +194,8 @@ def _install_lovelace_card() -> None:
 
 
 async def on_startup(app: web.Application):
+    app["jinja"] = Environment(loader=FileSystemLoader("/app/templates"), autoescape=True)
+
     await asyncio.to_thread(_install_lovelace_card)
 
     bridge = Bridge()

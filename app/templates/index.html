@@ -4,9 +4,6 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>GrabFood Tracker</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     :root {
       --grab-green: #00B14F;
@@ -27,7 +24,7 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      font-family: 'DM Sans', sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
       background: var(--bg);
       color: var(--text-primary);
       height: 100vh;
@@ -104,7 +101,7 @@
       padding: 0.45rem 1.1rem;
       border-radius: 8px;
       font-size: 0.825rem; font-weight: 600;
-      font-family: 'DM Sans', sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
       cursor: pointer; border: none;
       transition: all 0.15s ease;
       letter-spacing: 0.01em;
@@ -132,7 +129,7 @@
 
     .status-text { font-size: 0.78rem; color: var(--text-secondary); flex: 1; }
     .status-text.active { color: var(--grab-green-dark); font-weight: 500; }
-    .session-info { font-family: 'DM Mono', monospace; font-size: 0.72rem; color: var(--text-muted); }
+    .session-info { font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace; font-size: 0.72rem; color: var(--text-muted); }
 
     /* VNC */
     .vnc-container { flex: 1; position: relative; background: #000; display: none; }
@@ -190,7 +187,7 @@
     .manual-field label {
       font-size: 0.7rem; color: var(--text-muted);
       width: 170px; flex-shrink: 0;
-      font-family: 'DM Mono', monospace;
+      font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
     }
     .manual-body input {
       flex: 1;
@@ -200,7 +197,7 @@
       color: var(--text-primary);
       padding: 0.4rem 0.65rem;
       font-size: 0.75rem;
-      font-family: 'DM Mono', monospace;
+      font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
       transition: border-color 0.15s, box-shadow 0.15s;
     }
     .manual-body input:focus {
@@ -209,7 +206,7 @@
       box-shadow: 0 0 0 3px var(--grab-green-glow);
     }
     .manual-actions { margin-top: 0.25rem; }
-    #manual-result { font-size: 0.75rem; margin-top: 0.4rem; font-family: 'DM Mono', monospace; }
+    #manual-result { font-size: 0.75rem; margin-top: 0.4rem; font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace; }
 
 
     .grab-logo {

@@ -29,6 +29,11 @@ _state = {
     "error": "",
 }
 
+# Serialises concurrent launch_login calls (e.g. UI-triggered login racing with
+# poller-triggered silent reauth). The lock is held only for the atomic check-and-set
+# of _state["running"]; the long-running browser session runs outside it.
+_browser_lock = asyncio.Lock()
+
 # Holds references to on-demand display processes
 _xvfb_proc: Optional[subprocess.Popen] = None
 _x11vnc_proc: Optional[subprocess.Popen] = None
@@ -168,13 +173,13 @@ async def launch_login(
     Returns:
         True if session was captured successfully, False otherwise.
     """
-    if _state["running"]:
-        _LOGGER.warning("Login already in progress.")
-        return False
-
-    _state["running"] = True
-    _state["status"] = "reauth" if silent else "launching"
-    _state["error"] = ""
+    async with _browser_lock:
+        if _state["running"]:
+            _LOGGER.warning("Login already in progress.")
+            return False
+        _state["running"] = True
+        _state["status"] = "reauth" if silent else "launching"
+        _state["error"] = ""
 
     timeout = REAUTH_TIMEOUT if silent else LOGIN_TIMEOUT
     success = False

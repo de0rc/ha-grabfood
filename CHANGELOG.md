@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.2
+
+### Security
+
+- **XSS fix in map card** — restaurant names, order status, and ETA values from the Grab API are now HTML-escaped before being interpolated into `innerHTML`. Prevents injection if the API ever returns HTML characters in those fields.
+
+### Code quality
+
+- **`bridge.py` refactored** — all module-level free functions folded into `Bridge` as private methods. Added `_headers` property to eliminate 5× copy-pasted header dict. `_register_lovelace_resource` now reuses `Bridge._session` instead of creating a rogue `ClientSession`. Logger standardised to `grab.bridge`.
+- **`browser.py`** — added `_browser_lock` so the check-and-set of `_state["running"]` is atomic; prevents a race between a UI-triggered login and a poller-triggered silent reauth.
+- **`poller.py`** — added type annotations to `GrabPoller.__init__`; extracted `FALLBACK_RATE_LIMIT_DELAY` constant; added warning log for unrecognised order states; logger standardised to `grab.poller`.
+- **`tokenstore.py`** — `session_data_sync` disk-fallback path now logs a `WARNING` so it surfaces if the cold-start race ever fires.
+- **`main.py`** — Jinja environment initialised in `on_startup` (stored in `app["jinja"]`) instead of a module-level lazy global; `handle_token_value` caches the token property; `on_token` callback now calls `poller.force_poll()` so the new session is picked up immediately after login without waiting for the next scheduled poll.
+- **`index.html`** — removed Google Fonts CDN dependency; replaced with system font stack (`-apple-system` / `ui-monospace`).
+- **Lovelace card** — JS template extracted to `app/www/grabfood-map-card.template.js`; `build_card.py` now assembles the artifact from the template file. Added `osrm_url` card config option to point at a self-hosted OSRM routing server.
+- **`check_version.py`** — new root-level script that verifies `config.yaml`, `app/bridge.py`, and `app/www/grabfood-map-card.template.js` are all on the same version string.
+- **`translations/en.yaml`** — removed stale `show_driver_map` entry (option was removed in v0.2.0).
+- **`start.sh`** — removed dead `SHOW_DRIVER_MAP` read/export (option was removed in v0.2.0).
+
 ## 0.2.1
 
 ### Bug fixes

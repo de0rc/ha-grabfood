@@ -35,18 +35,24 @@ class TokenStore:
     def session_data_sync(self) -> dict:
         """Sync accessor used by GrabPoller via asyncio.to_thread.
         Returns the in-memory session data dict if valid, otherwise {}.
-        Falls back to disk only if in-memory data is absent (e.g. cold start
-        race before load() has completed, which should not normally happen).
+        Falls back to disk only if in-memory data is absent — this should not
+        normally happen because load() completes before GrabPoller.start() is
+        called. If it does fire, the warning below makes it visible.
         """
         if self._data.get("passenger_authn_token") and self._data.get("gfc_session"):
             return dict(self._data)
+        # Unexpected path: in-memory data absent, falling back to disk.
+        _LOGGER.warning(
+            "session_data_sync: in-memory session absent — falling back to disk. "
+            "This should only happen before load() completes."
+        )
         try:
             with open(self._path) as f:
                 saved = json.load(f)
-                data = saved.get("data", {})
-                if data.get("passenger_authn_token") and data.get("gfc_session"):
-                    return data
-                return {}
+            data = saved.get("data", {})
+            if data.get("passenger_authn_token") and data.get("gfc_session"):
+                return data
+            return {}
         except FileNotFoundError:
             return {}
         except Exception as e:

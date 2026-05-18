@@ -14,7 +14,8 @@ pushes it as Home Assistant sensors.
 | `app/browser.py` | Playwright browser automation — login UI, cookie capture, silent reauth |
 | `app/poller.py` | `GrabPoller` async poll loop — calls GrabFood API, handles 401 / reauth |
 | `app/bridge.py` | HA Supervisor API client — sensors, notifications, restart, legacy entity cleanup |
-| `app/www/build_card.py` | Source for the Lovelace card — run `python3 build_card.py` to rebuild `grabfood-map-card.js` |
+| `app/www/grabfood-map-card.template.js` | Lovelace card source — edit this file, then run `python3 app/www/build_card.py` to rebuild the artifact |
+| `app/www/build_card.py` | Build script — inlines Leaflet JS + CSS into the template, writes `grabfood-map-card.js` |
 | `app/tokenstore.py` | Thread-safe session store — in-memory cache + `/data/grab_token.json` |
 | `app/templates/index.html` | Jinja2 UI template |
 | `Dockerfile` | Base image — Playwright/Chromium, noVNC, x11vnc, xvfb, Python deps |
@@ -63,4 +64,4 @@ Every commit **must** update both `config.yaml` (version field) and `CHANGELOG.m
 
 Version format: `0.x.y` in files, `v0.x.y` in commit messages.
 
-**Three places must always stay in sync:** `config.yaml` (version field), `app/bridge.py` (`ADDON_VERSION`), and `app/www/build_card.py` (`_VERSION`). After changing `build_card.py`, always run `python3 app/www/build_card.py` to regenerate `grabfood-map-card.js`.
+**Three places must always stay in sync:** `config.yaml` (version field), `app/bridge.py` (`ADDON_VERSION`), and `app/www/grabfood-map-card.template.js` (`_VERSION`). After changing the template, always run `python3 app/www/build_card.py` to regenerate `grabfood-map-card.js`. Run `python3 check_version.py` to verify all three are in sync before committing.

@@ -40,11 +40,12 @@ entity: sensor.grabfood_orders
 show_info: true        # show restaurant name + ETA below the map (default: true)
 height: 400            # map height in pixels (default: 400)
 aspect_ratio: "16/9"   # overrides height when set
+osrm_url: "https://router.project-osrm.org/route/v1/driving/"  # routing endpoint (optional)
 ```
 
 A visual editor is available — click the pencil icon on the card to configure it without YAML.
 
-The card uses CartoDB Voyager tiles with automatic dark mode support, and [OSRM](https://project-osrm.org/) for routing — no API keys required.
+The card uses CartoDB Voyager tiles with automatic dark mode support, and [OSRM](https://project-osrm.org/) for routing — no API keys required. The default routing endpoint is the public OSRM demo server; set `osrm_url` to use a self-hosted instance.
 
 ## Force poll
 
