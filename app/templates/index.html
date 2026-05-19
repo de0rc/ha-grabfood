@@ -270,6 +270,9 @@
     <button class="btn btn-primary" id="btn-login" onclick="startLogin()">
       Login with Grab
     </button>
+    <button class="btn btn-secondary" id="btn-cancel" onclick="cancelLogin()" style="display:none">
+      Cancel
+    </button>
     <button class="btn btn-secondary" id="btn-hide" onclick="hideVnc()" style="display:none">
       Hide browser
     </button>
@@ -327,17 +330,24 @@
     return `${location.origin}${ingress}/novnc/vnc.html?path=${encodeURIComponent(wsPath.replace(/^\//, ''))}&autoconnect=true&resize=scale&show_dot=false`;
   }
 
+  let vncLive = false;
+
   function showVnc() {
     document.getElementById("vnc-container").classList.add("visible");
     document.getElementById("vnc-placeholder").classList.add("hidden");
     document.getElementById("btn-hide").style.display = "inline-block";
-    document.getElementById("vnc-frame").src = getNoVncUrl();
+    if (!vncLive) {
+      document.getElementById("vnc-frame").src = getNoVncUrl();
+      vncLive = true;
+    }
   }
 
   function hideVnc() {
     document.getElementById("vnc-container").classList.remove("visible");
     document.getElementById("vnc-placeholder").classList.remove("hidden");
     document.getElementById("btn-hide").style.display = "none";
+    document.getElementById("vnc-frame").src = "";
+    vncLive = false;
   }
 
   const STATUS_MESSAGES = {
@@ -350,18 +360,35 @@
     "reauth":        "Re-authenticating… please wait",
   };
 
+  let _pollIv = null;
+
+  function resetLoginUI() {
+    const btn = document.getElementById("btn-login");
+    btn.disabled = false;
+    btn.innerHTML = "Login with Grab";
+    document.getElementById("btn-cancel").style.display = "none";
+    if (_pollIv !== null) { clearInterval(_pollIv); _pollIv = null; }
+    hideVnc();
+  }
+
+  async function cancelLogin() {
+    resetLoginUI();
+    try { await fetch(BASE + "/login/cancel", { method: "POST" }); } catch (_) {}
+    setStatus("idle");
+  }
+
   async function startLogin() {
     const btn = document.getElementById("btn-login");
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span>Launching…';
+    document.getElementById("btn-cancel").style.display = "inline-block";
     setStatus("launching");
 
     const resp = await fetch(BASE + "/login/start", { method: "POST" });
     const data = await resp.json();
     if (!data.ok) {
+      resetLoginUI();
       setStatus("error");
-      btn.disabled = false;
-      btn.innerHTML = "Login with Grab";
       return;
     }
     pollStatus();
@@ -380,35 +407,28 @@
       }
     }
 
-    // Show VNC only once the display is ready and the browser is open
     if (status === "waiting_login") {
       showVnc();
     }
   }
 
   function pollStatus() {
-    const btn = document.getElementById("btn-login");
-    const iv = setInterval(async () => {
+    _pollIv = setInterval(async () => {
       try {
         const resp = await fetch(BASE + "/login/status");
         const data = await resp.json();
         setStatus(data.status);
         if (data.status === "captured") {
-          clearInterval(iv);
+          clearInterval(_pollIv); _pollIv = null;
+          document.getElementById("btn-cancel").style.display = "none";
           setTimeout(() => location.reload(), 1500);
         } else if (["timeout", "error"].includes(data.status)) {
-          clearInterval(iv);
-          btn.disabled = false;
-          btn.innerHTML = "Login with Grab";
+          resetLoginUI();
         } else if (!data.running && data.status === "idle") {
-          clearInterval(iv);
-          btn.disabled = false;
-          btn.innerHTML = "Login with Grab";
+          resetLoginUI();
         }
       } catch (e) {
-        clearInterval(iv);
-        btn.disabled = false;
-        btn.innerHTML = "Login with Grab";
+        resetLoginUI();
       }
     }, 2000);
   }

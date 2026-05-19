@@ -45,9 +45,9 @@ entity: sensor.grabfood_orders
 
 3. Start the add-on and open the Web UI from the sidebar.
 
-4. Click **Start Login** — a browser window will open via noVNC.
+4. Click **Login with Grab** — a browser window will open via noVNC.
 
-5. Log in to your GrabFood account. The session is captured automatically.
+5. Log in to your GrabFood account. The session is captured automatically. Use the **Cancel** button to abort the login at any time.
 
 > **Alternative:** If the browser login doesn't work in your environment, use the **Manual session entry** panel to paste your `passenger_authn_token` and `gfc_session` cookies directly.
 

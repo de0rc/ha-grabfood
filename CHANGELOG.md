@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.3
+
+### Bug fixes
+
+- **noVNC endless reconnect loop fixed** — `showVnc()` was called on every 2-second status poll while the browser was open, unconditionally resetting the iframe `src` and reloading the noVNC page each time. A `vncLive` flag now guards the `src` assignment so the iframe is only initialised once per login session; `hideVnc()` clears the flag when the browser is dismissed.
+- **Login button permanently disabled after timeout fixed** — there was no way to abort an in-progress login, leaving the button stuck in a disabled/spinning state until the 180-second timeout elapsed (or after being caught in the reconnect loop). A **Cancel** button now appears alongside the spinner; clicking it immediately resets the UI and calls the new `POST /login/cancel` endpoint, which cancels the running browser task. The existing `finally` block in `launch_login` handles cleanup (Xvfb, x11vnc, state reset) on cancellation.
+
 ## 0.2.2
 
 ### Security

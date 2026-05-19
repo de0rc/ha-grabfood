@@ -103,6 +103,13 @@ async def handle_manual_token(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
 
+async def handle_login_cancel(request: web.Request) -> web.Response:
+    task: asyncio.Task = request.app.get("login_task")
+    if task and not task.done():
+        task.cancel()
+    return web.json_response({"ok": True})
+
+
 async def handle_force_poll(request: web.Request) -> web.Response:
     """Immediately wake the poll loop, skipping the current sleep interval."""
     poller: GrabPoller = request.app["poller"]
@@ -239,6 +246,7 @@ async def main():
 
     app.router.add_get("/", handle_index)
     app.router.add_post("/login/start", handle_login_start)
+    app.router.add_post("/login/cancel", handle_login_cancel)
     app.router.add_get("/login/status", handle_login_status)
     app.router.add_get("/token/value", handle_token_value)
     app.router.add_post("/token/manual", handle_manual_token)

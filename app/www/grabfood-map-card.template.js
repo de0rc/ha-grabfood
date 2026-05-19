@@ -1,8 +1,8 @@
-// GrabFood Tracker — Lovelace map card v0.2.2
+// GrabFood Tracker — Lovelace map card v0.2.3
 // Displays home pin, active driver pins, and OSRM routes for all simultaneous orders.
 
 const _esc = s => s == null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-const _VERSION = '0.2.2';
+const _VERSION = '0.2.3';
 const _ORDER_COLORS = ['#00B14F', '#FF6B35', '#4ECDC4', '#45B7D1', '#9B59B6'];
 const _OSRM_BASE = 'https://router.project-osrm.org/route/v1/driving/';
 const _LEAFLET_IMG = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/images/';
