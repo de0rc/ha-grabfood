@@ -54,8 +54,20 @@ async def handle_index(request: web.Request) -> web.Response:
 async def handle_login_start(request: web.Request) -> web.Response:
     login_lock: asyncio.Lock = request.app["login_lock"]
     async with login_lock:
-        if get_state()["running"]:
-            return web.json_response({"ok": False, "error": "Login already in progress"})
+        state = get_state()
+        if state["running"]:
+            if state["status"] == "reauth":
+                # User explicitly wants a manual login — cancel the background silent reauth
+                # and let it clean up (finally block resets _state["running"]) before proceeding.
+                task: asyncio.Task = request.app.get("login_task")
+                if task and not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+            else:
+                return web.json_response({"ok": False, "error": "Login already in progress"})
 
         poller: GrabPoller = request.app["poller"]
 

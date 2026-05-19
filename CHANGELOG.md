@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.4
+
+### Bug fixes
+
+- **Manual login blocked by silent reauth fixed** — on startup with a stale token, the add-on automatically attempts a silent re-authentication. If the user clicked "Login with Grab" during this window, the server rejected it with "Login already in progress" and the UI showed a generic error. The manual login now cancels any in-progress silent reauth and proceeds immediately, so the user is never blocked waiting for the 60-second reauth timeout.
+
 ## 0.2.3
 
 ### Bug fixes
