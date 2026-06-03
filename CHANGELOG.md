@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.3.0
+
+### Bug fixes
+
+- **Map card never showed driver pins** — `bridge.py` stripped `driver_lat`/`driver_lon` from
+  the `sensor.grabfood_orders` attributes, but the map card reads exactly those fields, so driver
+  pins and route lines could never render. Coordinates are now included as raw numbers (or `null`),
+  and the card filters with a finite-number check so a legitimate `0.0` latitude (e.g. on the
+  equator) is no longer dropped as falsy.
+- **Manual login could not cancel an in-progress silent reauth** — silent re-authentication is
+  always poller-initiated, and the previous fix only cancelled UI-initiated tasks, so clicking
+  "Login with Grab" during a reauth was a no-op that blocked the user for up to 60 s. Browser-session
+  ownership is now centralised in a single `LoginManager`; a manual login cooperatively aborts the
+  running reauth and proceeds immediately.
+- **Token-expiry notification was never auto-dismissed** — the `was_expired` recovery signal was
+  always false (the flag was reset before the next successful poll could read it), so the
+  "Re-authentication Required" notification lingered forever after recovery. Recovery now uses a
+  dedicated flag and dismisses the notification on the next successful poll.
+- **Silent-reauth restart loop** — a successful reauth requested a supervisor restart to reclaim
+  memory, but reauth declared success even when it re-captured the same dead cookies, so a truly
+  expired session could loop: restart → 401 → reauth → restart. Reauth now verifies the captured
+  cookies actually changed, and a persisted backoff caps reauth-driven restarts before falling back
+  to a manual-relogin notification.
+- **Manual session entry ignored country** — pasted cookies always defaulted to `MY`, breaking the
+  API for other regions. The country is now read from the `gfc_session` token (falls back to `MY`).
+- **base64 padding** — `extract_session_key` over-padded when the JWT payload length was already a
+  multiple of 4.
+
+### Code quality
+
+- **`browser.py`** — module-global session state folded into a `LoginManager` class; cooperative
+  abort (an `asyncio.Event` checked by the capture loop) replaces hard task cancellation.
+- **`poller.py`** — per-cycle logic extracted into a testable `_poll_once` / `_handle_token_expired`;
+  all poll waits are now `force_poll`-interruptible.
+- **Map card** — `set hass` no longer rebuilds the DOM and refetches routes on every unrelated HA
+  state change; it updates only when the tracked entity, the home zone, or dark mode changes.
+- **`main.py`** — logs a warning when the `/config/grabfood_tracker` module override is active.
+- **Tooling** — `check_version.py` now also verifies the built `grabfood-map-card.js`; `build_card.py
+  --check` fails if the committed artifact is stale.
+- **Tests** — added a `pytest` suite (`tests/`, `requirements-dev.txt`) covering the JWT helpers,
+  order parsing, and the reauth/notification state machine, plus a CI workflow.
+
 ## 0.2.4
 
 ### Bug fixes

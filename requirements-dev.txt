@@ -1,0 +1,7 @@
+# Development / test dependencies (not installed into the add-on image).
+# The runtime deps (aiohttp, jinja2) are needed to import the modules under test;
+# CI installs them from the versions pinned in the Dockerfile, locally just `pip install`.
+pytest>=8,<10
+pytest-asyncio>=0.24
+aiohttp>=3.10
+jinja2>=3.1

@@ -5,12 +5,13 @@ Sends cookies exactly as the browser does, not Authorization: Bearer.
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Awaitable, Callable, Optional
 
 import aiohttp
 
-from browser import CHROME_USER_AGENT, try_silent_reauth
+from browser import CHROME_USER_AGENT
 from tokenstore import TokenStore
 
 _LOGGER = logging.getLogger("grab.poller")
@@ -53,6 +54,14 @@ POLL_INTERVAL_ACTIVE = 60     # ALLOCATING, PICKING_UP, DRIVER_AT_STORE — 60s
 POLL_INTERVAL_IDLE = 300      # COMPLETED, CANCELLED etc — 5 mins
 FALLBACK_RATE_LIMIT_DELAY = 3 # seconds between primary and fallback API requests
 
+# Reauth-restart loop breaker: a successful silent reauth requests a supervisor restart to
+# reclaim Playwright's memory. If the captured session is itself dead, that 401s again on the
+# next boot → another reauth → another restart. These bound that loop.
+MAX_REAUTH_RESTARTS = 3       # consecutive reauth-driven restarts allowed within the window
+REAUTH_RESTART_WINDOW = 600   # seconds — reset the counter once this has elapsed
+
+SESSION_RECREATE_INTERVAL = 6 * 3600  # recreate aiohttp session every 6 hours
+
 
 class TokenExpiredError(Exception):
     """Raised when the GrabFood API returns 401 — session needs re-login."""
@@ -84,7 +93,7 @@ def _extract_order_data(order: dict) -> dict:
     driver_lon = None
     try:
         loc = driver_track.get("location") or {}
-        if loc.get("latitude") and loc.get("longitude"):
+        if loc.get("latitude") is not None and loc.get("longitude") is not None:
             driver_lat = loc["latitude"]
             driver_lon = loc["longitude"]
         else:
@@ -150,8 +159,10 @@ async def _fetch_orders_from_url(
     cookies = {
         "passenger_authn_token": sess_data["passenger_authn_token"],
         "gfc_session": sess_data["gfc_session"],
-        "gfc_session_guid": sess_data.get("gfc_session_guid", ""),
     }
+    gfc_guid = sess_data.get("gfc_session_guid")
+    if gfc_guid:
+        cookies["gfc_session_guid"] = gfc_guid
     headers = {
         "accept": "application/json, text/plain, */*",
         "accept-language": "en",
@@ -248,29 +259,35 @@ async def fetch_orders(session: aiohttp.ClientSession, sess_data: dict) -> list[
         return []
 
 
-SESSION_RECREATE_INTERVAL = 6 * 3600  # recreate aiohttp session every 6 hours
-
-
 class GrabPoller:
     def __init__(
         self,
         token_store: TokenStore,
-        on_update: Callable[[list[dict], bool], Awaitable[None]],
+        on_update: Callable[[list[dict]], Awaitable[None]],
         on_token_expired: Callable[[], Awaitable[None]],
+        reauth: Callable[..., Awaitable[bool]],
         on_reauth_success: Optional[Callable[[], Awaitable[None]]] = None,
+        on_recovered: Optional[Callable[[], Awaitable[None]]] = None,
         on_state_change: Optional[Callable[[dict], Awaitable[None]]] = None,
     ):
         self._token_store = token_store
         self._on_update = on_update
         self._on_token_expired = on_token_expired
+        self._reauth = reauth
         self._on_reauth_success = on_reauth_success
+        self._on_recovered = on_recovered
         self._on_state_change = on_state_change
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._latest: list[dict] = []
-        self._token_expired = False
         self._last_states: dict[str, str] = {}  # order_id -> last known status
         self._wake = asyncio.Event()
+
+        # Re-auth / notification state.
+        self._notification_active = False   # an unresolved "re-login required" notification is shown
+        self._reauth_suspended = False      # session is dead; stop relaunching Chromium until recovery
+        self._reauth_restart_count = 0      # consecutive reauth-driven restarts (persisted)
+        self._reauth_window_start = 0.0     # epoch seconds the current restart window began
 
     @property
     def latest(self) -> list[dict]:
@@ -292,6 +309,9 @@ class GrabPoller:
                     oid = order.get("order_id") or "unknown"
                     self._last_states[oid] = order.get("order_status", "")
                 _LOGGER.debug("Pre-loaded %d order(s) from disk.", len(orders))
+            backoff = self._token_store.load_reauth_state_sync()
+            self._reauth_restart_count = backoff.get("count", 0)
+            self._reauth_window_start = backoff.get("window_start", 0.0)
             self._task = asyncio.create_task(self._poll_loop())
             _LOGGER.info("GrabPoller started.")
 
@@ -321,80 +341,10 @@ class GrabPoller:
                     session_created_at = asyncio.get_running_loop().time()
                     _LOGGER.debug("aiohttp session recreated to free memory.")
 
-                sess_data = await asyncio.to_thread(self._token_store.session_data_sync)
-                if not sess_data:
-                    _LOGGER.info("No session on disk yet — waiting 30s...")
-                    await asyncio.sleep(30)
-                    continue
+                interval = await self._poll_once(session)
 
-                try:
-                    data = await fetch_orders(session, sess_data)
-                except TokenExpiredError:
-                    if not self._token_expired:
-                        self._token_expired = True
-                        # Attempt silent re-authentication before alerting the user
-                        reauth_success = await try_silent_reauth(
-                            on_token=self._token_store.save,
-                            on_success=self._on_reauth_success,
-                        )
-                        if reauth_success:
-                            _LOGGER.info(
-                                "Silent re-authentication succeeded — resuming polling."
-                            )
-                            self._token_expired = False
-                        else:
-                            _LOGGER.error(
-                                "Silent re-authentication failed — manual re-login required. "
-                                "HA notification sent."
-                            )
-                            await self._on_token_expired()
-                            # Reset flag so reauth is attempted again next cycle rather
-                            # than being skipped indefinitely after a single failure.
-                            self._token_expired = False
-                    await asyncio.sleep(POLL_INTERVAL_IDLE)
-                    continue
-
-                was_expired = self._token_expired
-                self._token_expired = False
-
-                if data:
-                    self._latest = data
-                    await asyncio.to_thread(self._token_store.save_order_sync, data)
-                    try:
-                        await self._on_update(data, was_expired=was_expired)
-                    except Exception as e:
-                        _LOGGER.exception("on_update error: %s", e)
-                    # Fire state-change events for any order whose status changed
-                    for order in data:
-                        oid = order.get("order_id") or "unknown"
-                        new_state = order.get("order_status", "")
-                        if self._last_states.get(oid) != new_state:
-                            self._last_states[oid] = new_state
-                            if self._on_state_change:
-                                try:
-                                    await self._on_state_change(order)
-                                except Exception as e:
-                                    _LOGGER.exception("on_state_change error: %s", e)
-                    # Poll interval driven by the most urgent active order
-                    statuses = {o.get("order_status", "") for o in data}
-                    if statuses & FAST_STATES:
-                        interval = POLL_INTERVAL_FAST
-                    elif statuses & ACTIVE_STATES:
-                        interval = POLL_INTERVAL_ACTIVE
-                    else:
-                        interval = POLL_INTERVAL_IDLE
-                    unknown = statuses - FAST_STATES - ACTIVE_STATES - IDLE_STATES - {""}
-                    if unknown:
-                        _LOGGER.warning(
-                            "Unrecognised order state(s) — treating as idle: %s", unknown
-                        )
-                    _LOGGER.info(
-                        "%d order(s): %s | next poll in %ss",
-                        len(data), ", ".join(sorted(statuses)), interval
-                    )
-                else:
-                    interval = POLL_INTERVAL_IDLE
-
+                # All waits are force_poll-interruptible so a fresh login / manual poll
+                # request is picked up immediately instead of waiting out the interval.
                 try:
                     await asyncio.wait_for(self._wake.wait(), timeout=interval)
                     self._wake.clear()
@@ -403,3 +353,135 @@ class GrabPoller:
                     pass
         finally:
             await session.close()
+
+    async def _poll_once(self, session: aiohttp.ClientSession) -> int:
+        """Run one poll cycle: fetch, push sensor, fire events. Returns seconds to wait next."""
+        sess_data = await asyncio.to_thread(self._token_store.session_data_sync)
+        if not sess_data:
+            _LOGGER.info("No session on disk yet — waiting 30s...")
+            return 30
+
+        try:
+            data = await fetch_orders(session, sess_data)
+        except TokenExpiredError:
+            return await self._handle_token_expired(sess_data)
+
+        # Successful fetch — the session is valid, so clear any expired state.
+        await self._on_recovery()
+
+        if data:
+            self._latest = data
+            await asyncio.to_thread(self._token_store.save_order_sync, data)
+            try:
+                await self._on_update(data)
+            except Exception as e:
+                _LOGGER.exception("on_update error: %s", e)
+            # Fire state-change events for any order whose status changed
+            for order in data:
+                oid = order.get("order_id") or "unknown"
+                new_state = order.get("order_status", "")
+                if self._last_states.get(oid) != new_state:
+                    self._last_states[oid] = new_state
+                    if self._on_state_change:
+                        try:
+                            await self._on_state_change(order)
+                        except Exception as e:
+                            _LOGGER.exception("on_state_change error: %s", e)
+            # Poll interval driven by the most urgent active order
+            statuses = {o.get("order_status", "") for o in data}
+            if statuses & FAST_STATES:
+                interval = POLL_INTERVAL_FAST
+            elif statuses & ACTIVE_STATES:
+                interval = POLL_INTERVAL_ACTIVE
+            else:
+                interval = POLL_INTERVAL_IDLE
+            unknown = statuses - FAST_STATES - ACTIVE_STATES - IDLE_STATES - {""}
+            if unknown:
+                _LOGGER.warning("Unrecognised order state(s) — treating as idle: %s", unknown)
+            _LOGGER.info(
+                "%d order(s): %s | next poll in %ss",
+                len(data), ", ".join(sorted(statuses)), interval
+            )
+            return interval
+
+        return POLL_INTERVAL_IDLE
+
+    async def _on_recovery(self) -> None:
+        """Called after any successful fetch: clear expired-session state and dismiss notice."""
+        if self._notification_active:
+            self._notification_active = False
+            if self._on_recovered:
+                try:
+                    await self._on_recovered()
+                except Exception as e:
+                    _LOGGER.exception("on_recovered error: %s", e)
+        self._reauth_suspended = False
+        if self._reauth_restart_count or self._reauth_window_start:
+            self._reauth_restart_count = 0
+            self._reauth_window_start = 0.0
+            await asyncio.to_thread(
+                self._token_store.save_reauth_state_sync, {"count": 0, "window_start": 0.0}
+            )
+
+    async def _handle_token_expired(self, sess_data: dict) -> int:
+        """Handle a 401: attempt one silent reauth, validate it actually progressed, and
+        either restart (to apply the new session) or notify — with a persisted loop breaker."""
+        if self._reauth_suspended:
+            # Already determined the session is dead — don't relaunch Chromium every cycle.
+            return POLL_INTERVAL_IDLE
+
+        old = (sess_data.get("passenger_authn_token"), sess_data.get("gfc_session"))
+        ok = await self._reauth(on_token=self._token_store.save)
+
+        if ok:
+            new_data = await asyncio.to_thread(self._token_store.session_data_sync)
+            new = (new_data.get("passenger_authn_token"), new_data.get("gfc_session"))
+            if new == old:
+                # Reauth re-captured identical (stale) cookies — the underlying session is
+                # dead; restarting would just 401 again. Stop and ask for a manual re-login.
+                _LOGGER.warning(
+                    "Silent reauth captured identical cookies — session is dead, not restarting."
+                )
+                await self._mark_session_dead()
+                return POLL_INTERVAL_IDLE
+
+            if not await self._allow_reauth_restart():
+                _LOGGER.error(
+                    "Reauth-restart loop detected (%d within %ds) — giving up and notifying.",
+                    self._reauth_restart_count, REAUTH_RESTART_WINDOW
+                )
+                await self._mark_session_dead()
+                return POLL_INTERVAL_IDLE
+
+            _LOGGER.info("Silent re-authentication succeeded — restarting to apply new session.")
+            if self._on_reauth_success:
+                await self._on_reauth_success()  # supervisor restart; process likely exits here
+            return POLL_INTERVAL_IDLE
+
+        # Reauth could not capture cookies — may be transient (Chromium error / logged-out
+        # profile). Notify once but allow another attempt next cycle.
+        _LOGGER.error("Silent re-authentication failed — manual re-login may be required.")
+        if not self._notification_active:
+            await self._on_token_expired()
+            self._notification_active = True
+        return POLL_INTERVAL_IDLE
+
+    async def _allow_reauth_restart(self) -> bool:
+        """Record a reauth-driven restart and return True if it's within the allowed budget."""
+        now = time.time()
+        if now - self._reauth_window_start > REAUTH_RESTART_WINDOW:
+            self._reauth_window_start = now
+            self._reauth_restart_count = 0
+        self._reauth_restart_count += 1
+        await asyncio.to_thread(
+            self._token_store.save_reauth_state_sync,
+            {"count": self._reauth_restart_count, "window_start": self._reauth_window_start},
+        )
+        return self._reauth_restart_count <= MAX_REAUTH_RESTARTS
+
+    async def _mark_session_dead(self) -> None:
+        """Suspend further silent reauth and notify the user once. Cleared on recovery."""
+        self._reauth_suspended = True
+        if not self._notification_active:
+            await self._on_token_expired()
+            self._notification_active = True

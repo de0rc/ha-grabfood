@@ -6,14 +6,18 @@ import sys
 import os
 
 _override = "/config/grabfood_tracker"
-if os.path.isdir(_override):
+_override_active = os.path.isdir(_override)
+if _override_active:
+    # Dev hook: a matching module dropped in /config/grabfood_tracker overrides the bundled
+    # one without rebuilding the image. Logged below (once the logger is configured) so it's
+    # never a silent surprise.
     sys.path.insert(0, _override)
 
 from aiohttp import web, WSMsgType
 from jinja2 import Environment, FileSystemLoader
 
 from tokenstore import TokenStore
-from browser import launch_login, get_state, extract_session_key
+from browser import LoginManager, extract_session_key, extract_country
 from poller import GrabPoller
 from bridge import Bridge
 
@@ -24,6 +28,9 @@ logging.basicConfig(
 )
 logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 _LOGGER = logging.getLogger("grab.main")
+
+if _override_active:
+    _LOGGER.warning("Module override active: loading modules from %s (dev hook).", _override)
 
 token_store = TokenStore(path="/data/grab_token.json")
 
@@ -39,7 +46,7 @@ async def handle_index(request: web.Request) -> web.Response:
         token_updated_at_display = raw_ts[:19].replace("T", " ") + " UTC"
     else:
         token_updated_at_display = ""
-    browser_state = get_state()
+    browser_state = request.app["login_manager"].get_state()
     tmpl = request.app["jinja"].get_template("index.html")
     html = tmpl.render(
         ingress_path=ingress_path,
@@ -52,37 +59,25 @@ async def handle_index(request: web.Request) -> web.Response:
 
 
 async def handle_login_start(request: web.Request) -> web.Response:
-    login_lock: asyncio.Lock = request.app["login_lock"]
-    async with login_lock:
-        state = get_state()
-        if state["running"]:
-            if state["status"] == "reauth":
-                # User explicitly wants a manual login — cancel the background silent reauth
-                # and let it clean up (finally block resets _state["running"]) before proceeding.
-                task: asyncio.Task = request.app.get("login_task")
-                if task and not task.done():
-                    task.cancel()
-                    try:
-                        await task
-                    except (asyncio.CancelledError, Exception):
-                        pass
-            else:
-                return web.json_response({"ok": False, "error": "Login already in progress"})
+    login_manager: LoginManager = request.app["login_manager"]
+    poller: GrabPoller = request.app["poller"]
+    bridge: Bridge = request.app["bridge"]
 
-        poller: GrabPoller = request.app["poller"]
+    async def on_token(token: dict):
+        await token_store.save(token)
+        poller.force_poll()
 
-        async def on_token(token: dict):
-            await token_store.save(token)
-            poller.force_poll()
-
-        bridge: Bridge = request.app["bridge"]
-        request.app["login_task"] = asyncio.create_task(launch_login(on_token=on_token, on_success=bridge.restart))
+    # LoginManager preempts any in-progress silent reauth and serialises against a UI login
+    # already running. Returns False only if another UI login is already underway.
+    started = await login_manager.start_login(on_token=on_token, on_success=bridge.restart)
+    if not started:
+        return web.json_response({"ok": False, "error": "Login already in progress"})
     return web.json_response({"ok": True})
 
 
 async def handle_login_status(request: web.Request) -> web.Response:
     return web.json_response({
-        **get_state(),
+        **request.app["login_manager"].get_state(),
         "has_token": token_store.has_token,
         "token_updated_at": token_store.updated_at,
     })
@@ -105,10 +100,12 @@ async def handle_manual_token(request: web.Request) -> web.Response:
         if not authn or not gfc:
             return web.json_response({"ok": False, "error": "Both passenger_authn_token and gfc_session are required"}, status=400)
         session_key = extract_session_key(gfc)
+        country = extract_country(gfc) or "MY"
         await token_store.save({
             "passenger_authn_token": authn,
             "gfc_session": gfc,
             "session_key": session_key,
+            "country": country,
         })
         return web.json_response({"ok": True})
     except Exception as exc:
@@ -116,9 +113,7 @@ async def handle_manual_token(request: web.Request) -> web.Response:
 
 
 async def handle_login_cancel(request: web.Request) -> web.Response:
-    task: asyncio.Task = request.app.get("login_task")
-    if task and not task.done():
-        task.cancel()
+    await request.app["login_manager"].cancel()
     return web.json_response({"ok": True})
 
 
@@ -222,11 +217,15 @@ async def on_startup(app: web.Application):
     await bridge.cleanup_legacy()
     await bridge.register_card_resource()
 
+    login_manager = LoginManager()
+
     poller = GrabPoller(
         token_store=token_store,
         on_update=bridge.update,
         on_token_expired=bridge.notify_token_expired,
+        reauth=login_manager.request_reauth,
         on_reauth_success=bridge.restart,
+        on_recovered=bridge.clear_notification,
         on_state_change=bridge.fire_event,
     )
     poller.start()
@@ -237,7 +236,7 @@ async def on_startup(app: web.Application):
         _LOGGER.info("Restoring %d cached order(s) to HA on startup.", len(poller.latest))
         await bridge.update(poller.latest)
 
-    app["login_lock"] = asyncio.Lock()
+    app["login_manager"] = login_manager
     app["poller"] = poller
     app["bridge"] = bridge
     _LOGGER.info("GrabPoller and Bridge started.")

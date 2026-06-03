@@ -1,8 +1,8 @@
-// GrabFood Tracker — Lovelace map card v0.2.4
+// GrabFood Tracker — Lovelace map card v0.3.0
 // Displays home pin, active driver pins, and OSRM routes for all simultaneous orders.
 
 const _esc = s => s == null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-const _VERSION = '0.2.4';
+const _VERSION = '0.3.0';
 const _ORDER_COLORS = ['#00B14F', '#FF6B35', '#4ECDC4', '#45B7D1', '#9B59B6'];
 const _OSRM_BASE = 'https://router.project-osrm.org/route/v1/driving/';
 const _LEAFLET_IMG = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/images/';
@@ -59,14 +59,22 @@ class GrabFoodMapCard extends HTMLElement {
   }
 
   set hass(hass) {
-    const prevDark = this._isDark(this._hass);
+    const prev = this._hass;
+    const prevDark = this._isDark(prev);
     this._hass = hass;
     if (!this._ready) {
       this._build();
-    } else {
-      if (this._map && this._isDark(hass) !== prevDark) {
-        this._applyTiles(this._isDark(hass));
-      }
+      return;
+    }
+    const dark = this._isDark(hass);
+    if (this._map && dark !== prevDark) this._applyTiles(dark);
+    // HA calls this setter on every state change anywhere in the system. Only do the
+    // (DOM-rebuilding, route-fetching) update when something we actually render changed:
+    // the tracked entity, the home zone, or dark mode. Entity state objects keep their
+    // reference identity across ticks when unchanged, so === is a valid change check.
+    const entityChanged = prev?.states?.[this._entity] !== hass.states[this._entity];
+    const homeChanged = prev?.states?.['zone.home'] !== hass.states['zone.home'];
+    if (entityChanged || homeChanged || dark !== prevDark) {
       this._update();
     }
   }
@@ -362,7 +370,8 @@ class GrabFoodMapCard extends HTMLElement {
     const state = this._hass.states[this._entity];
     const orders = state?.attributes?.orders || [];
     this._renderInfo(orders);
-    const active = orders.filter(o => o.active_order && o.driver_lat && o.driver_lon);
+    const active = orders.filter(o =>
+      o.active_order && Number.isFinite(o.driver_lat) && Number.isFinite(o.driver_lon));
 
     // Remove stale markers/routes
     const activeIds = new Set(active.map((o, i) => o.order_id || `idx_${i}`));

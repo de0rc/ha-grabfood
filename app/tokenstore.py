@@ -12,6 +12,9 @@ _LOGGER = logging.getLogger("grab.tokenstore")
 class TokenStore:
     def __init__(self, path: str = "/data/grab_token.json") -> None:
         self._path = path
+        data_dir = os.path.dirname(path) or "."
+        self._order_path = os.path.join(data_dir, "grab_order.json")
+        self._reauth_path = os.path.join(data_dir, "grab_reauth.json")
         self._data: dict = {}
         self._updated_at: str = ""
         self._lock = asyncio.Lock()
@@ -113,25 +116,49 @@ class TokenStore:
     # Order data persistence — last known order survives restarts
     # ------------------------------------------------------------------
 
-    _ORDER_PATH = "/data/grab_order.json"
-
     def save_order_sync(self, data: list[dict]) -> None:
         """Sync: write last orders list to disk. Called via asyncio.to_thread."""
         try:
-            tmp = self._ORDER_PATH + ".tmp"
+            tmp = self._order_path + ".tmp"
             with open(tmp, "w") as f:
                 json.dump(data, f, default=str)
-            os.replace(tmp, self._ORDER_PATH)
+            os.replace(tmp, self._order_path)
         except Exception as e:
             _LOGGER.warning("Failed to save order data: %s", e)
 
     def load_order_sync(self) -> Optional[list[dict] | dict]:
         """Sync: read last orders from disk. Returns list (new format) or dict (old format, handled in start())."""
         try:
-            with open(self._ORDER_PATH) as f:
+            with open(self._order_path) as f:
                 return json.load(f)
         except FileNotFoundError:
             return None
         except Exception as e:
             _LOGGER.warning("Failed to load order data: %s", e)
             return None
+
+    # ------------------------------------------------------------------
+    # Silent-reauth restart backoff — persisted so the loop breaker
+    # survives the supervisor restarts that the reauth loop triggers.
+    # ------------------------------------------------------------------
+
+    def load_reauth_state_sync(self) -> dict:
+        """Sync: read persisted reauth-restart backoff state. Returns {} if absent."""
+        try:
+            with open(self._reauth_path) as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return {}
+        except Exception as e:
+            _LOGGER.warning("Failed to load reauth state: %s", e)
+            return {}
+
+    def save_reauth_state_sync(self, state: dict) -> None:
+        """Sync: write reauth-restart backoff state to disk atomically."""
+        try:
+            tmp = self._reauth_path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(state, f)
+            os.replace(tmp, self._reauth_path)
+        except Exception as e:
+            _LOGGER.warning("Failed to save reauth state: %s", e)

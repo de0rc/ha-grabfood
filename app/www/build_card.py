@@ -1,8 +1,11 @@
 """
 build_card.py — assembles grabfood-map-card.js from Leaflet + card template.
 Run from app/www/:  python3 build_card.py
+Pass --check to verify the committed artifact is up to date (exits 1 if a rebuild
+would change it) without writing — used by CI to catch un-rebuilt template edits.
 """
 import os
+import sys
 
 LEAFLET_IMG_BASE = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/images/"
 
@@ -25,6 +28,20 @@ def main():
     output = f"// Leaflet 1.9.4 — https://leafletjs.com\n{leaflet_js}\n\n{card}"
 
     out_path = os.path.join(base, "grabfood-map-card.js")
+
+    if "--check" in sys.argv:
+        try:
+            with open(out_path, "r", encoding="utf-8") as f:
+                current = f.read()
+        except FileNotFoundError:
+            current = None
+        if current != output:
+            print("ERROR: grabfood-map-card.js is stale — run `python3 app/www/build_card.py`.",
+                  file=sys.stderr)
+            sys.exit(1)
+        print("grabfood-map-card.js is up to date.")
+        return
+
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(output)
 

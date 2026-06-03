@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Verify version is in sync across all files
+        run: python3 check_version.py
+
+      - name: Verify the built card artifact is up to date
+        run: python3 app/www/build_card.py --check
+
+      - name: Run tests
+        run: python3 -m pytest -q

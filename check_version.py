@@ -11,6 +11,9 @@ FILES = {
     "config.yaml":                          r'^version:\s+"?([0-9.]+)"?',
     "app/bridge.py":                        r'ADDON_VERSION\s*=\s*"([0-9.]+)"',
     "app/www/grabfood-map-card.template.js": r"const _VERSION\s*=\s*'([0-9.]+)'",
+    # The built artifact is what HA actually serves — verify it was rebuilt to the same
+    # version (catches a template _VERSION bump without re-running build_card.py).
+    "app/www/grabfood-map-card.js":         r"const _VERSION\s*=\s*'([0-9.]+)'",
 }
 
 versions = {}

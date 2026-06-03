@@ -17,7 +17,7 @@ SENSOR_PREFIX = "sensor.grabfood"
 ORDERS_ENTITY = f"{SENSOR_PREFIX}_orders"
 
 # Must match version in config.yaml and app/www/grabfood-map-card.template.js _VERSION constant.
-ADDON_VERSION = "0.2.4"
+ADDON_VERSION = "0.3.0"
 CARD_URL = f"/local/grabfood-map-card.js?v={ADDON_VERSION}"
 CARD_URL_BASE = "/local/grabfood-map-card.js"
 
@@ -79,17 +79,20 @@ class Bridge:
             return
         await self._cleanup_legacy()
 
-    async def update(self, orders: list[dict], was_expired: bool = False):
+    async def update(self, orders: list[dict]):
         if not self._session or not self._supervisor_token:
             return
         await self._push_orders_sensor(orders)
-        if was_expired:
-            await self._clear_token_expired_notification()
 
     async def notify_token_expired(self):
         if not self._session or not self._supervisor_token:
             return
         await self._send_token_expired_notification()
+
+    async def clear_notification(self):
+        if not self._session or not self._supervisor_token:
+            return
+        await self._clear_token_expired_notification()
 
     async def fire_event(self, data: dict):
         if not self._session or not self._supervisor_token:
@@ -139,10 +142,12 @@ class Bridge:
     async def _push_orders_sensor(self, orders: list[dict]) -> None:
         """Push sensor.grabfood_orders — state is active order count, attributes hold full order list."""
         active_count = sum(1 for o in orders if o.get("active_order"))
-        # Serialise orders for HA attributes — replace None with "unknown" for cleaner display
+        # Serialise orders for HA attributes. driver_lat/driver_lon are kept as raw numbers
+        # (or null) — the map card reads them to plot driver pins, so they must NOT be
+        # coerced to the "unknown" string. Other None fields become "unknown" for display.
+        coord_keys = ("driver_lat", "driver_lon")
         serialised = [
-            {k: (v if v is not None else "unknown") for k, v in o.items()
-             if k not in ("driver_lat", "driver_lon")}
+            {k: (v if (v is not None or k in coord_keys) else "unknown") for k, v in o.items()}
             for o in orders
         ]
         payload: dict[str, Any] = {
